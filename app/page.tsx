@@ -137,8 +137,11 @@ export default function Personal() {
       >
         <div className="flex-1">
           <p className="text-zinc-600 dark:text-zinc-400">
-            Focused on creating intuitive and performant web experiences.
-            Bridging the gap between design and development.
+            Full‑stack engineer and relentless problem‑solver fluent in TypeScript, Python,
+            and Solana Web3. I've shipped production‑grade e‑commerce and classifieds
+            platforms with secure checkout and admin dashboards, a live NBA Hot‑Streak
+            Tracker for stats junkies, and automated Solana trading bots with Telegram
+            alerts—serving thousands of users in real time.
           </p>
         </div>
       </motion.section>
