@@ -12,9 +12,50 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: 'Nim - Personal website template',
+  title: 'Jorge Cambra - Software Engineer',
   description:
-    'Nim is a free and open-source personal website template built with Next.js 15, React 19 and Motion-Primitives.',
+    'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+  keywords: [
+    'Software Engineer',
+    'TypeScript',
+    'Python',
+    'Solana',
+    'Web3',
+    'E-commerce',
+    'Real-time Applications',
+    'Blockchain Development',
+  ],
+  icons: {
+    icon: '/images/jcl80.png',
+    shortcut: '/images/jcl80.png',
+    apple: '/images/jcl80.png',
+    other: {
+      rel: 'apple-touch-icon-precomposed',
+      url: '/images/jcl80.png',
+    },
+  },
+  openGraph: {
+    title: 'Jorge Cambra - Software Engineer',
+    description: 'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+    url: 'https://jorgecambra.com',
+    siteName: 'Jorge Cambra',
+    images: [
+      {
+        url: '/images/jcl80.png',
+        width: 800,
+        height: 600,
+        alt: 'Jorge Cambra',
+      },
+    ],
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Jorge Cambra - Software Engineer',
+    description: 'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+    images: ['/images/jcl80.png'],
+  },
 }
 
 const geist = Geist({

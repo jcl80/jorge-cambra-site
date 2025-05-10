@@ -13,6 +13,7 @@ type WorkExperience = {
   end: string
   link: string
   id: string
+  technologies: string[]
 }
 
 type BlogPost = {
@@ -32,14 +33,14 @@ export const PROJECTS: Project[] = [
     name: 'NBA Hot-Streak Tracker',
     description: 'Live NBA analytics tool for tracking player hot streaks and performance metrics.',
     link: '#',
-    video: 'https://res.cloudinary.com/read-cv/video/upload/t_v_b/v1/1/profileItems/W2azTw5BVbMXfj7F53G92hMVIn32/newProfileItem/d898be8a-7037-4c71-af0c-8997239b050d.mp4?_a=DATAdtAAZAA0',
+    video: '/videos/HotStreak_compressed.mp4',
     id: 'project1',
   },
   {
     name: 'Multi-Store Ecommerce Platform',
     description: 'Production-grade classified ads platform with multi-store support, secure checkout, and comprehensive admin dashboard.',
     link: '#',
-    video: 'https://res.cloudinary.com/read-cv/video/upload/t_v_b/v1/1/profileItems/W2azTw5BVbMXfj7F53G92hMVIn32/XSfIvT7BUWbPRXhrbLed/ee6871c9-8400-49d2-8be9-e32675eabf7e.mp4?_a=DATAdtAAZAA0',
+    video: '/videos/prueba_portfolio_trimmed.mp4',
     id: 'project2',
   },
 ]
@@ -52,6 +53,22 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
     end: 'Present',
     link: 'https://tratohecho.com.py',
     id: 'work1',
+    technologies: [
+      'Next.js',
+      'TypeScript',
+      'Node.js',
+      'Express',
+      'Python',
+      'MongoDB',
+      'SQL',
+      'Prisma',
+      'Shadcn',
+      'Digital Ocean',
+      'Vercel',
+      'Docker',
+      'Yup',
+      'Zod'
+    ]
   },
   {
     company: 'Central Shop',
@@ -60,6 +77,21 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
     end: '2023',
     link: 'https://centralshop.com.py',
     id: 'work2',
+    technologies: [
+      'Next.js',
+      'TypeScript',
+      'Node.js',
+      'Express',
+      'React',
+      'MongoDB',
+      'Ant Design',
+      'Tailwind CSS',
+      'Bootstrap',
+      'Digital Ocean',
+      'Docker',
+      'Yup',
+      'Jest'
+    ]
   },
   {
     company: 'Contapp Digital',
@@ -68,28 +100,27 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
     end: '2022',
     link: 'https://contappdigital.com/',
     id: 'work3',
+    technologies: [
+      'Next.js',
+      'NestJS',
+      'TypeScript',
+      'Express',
+      'MongoDB',
+      'Socket.io',
+      'Tailwind CSS',
+      'Yup',
+      'Jest'
+    ]
   },
 ]
 
 export const BLOG_POSTS: BlogPost[] = [
   {
-    title: 'Building Real-time Applications with Web3',
-    description: 'A deep dive into creating performant real-time applications using Web3 technologies',
-    link: '/blog/building-realtime-web3',
-    uid: 'blog-1',
-  },
-  {
-    title: 'TypeScript Best Practices for Production',
-    description: 'Lessons learned from shipping production-grade TypeScript applications',
-    link: '/blog/typescript-production',
-    uid: 'blog-2',
-  },
-  {
-    title: 'Automating Trading with Solana',
-    description: 'How to build and deploy automated trading bots on Solana blockchain',
-    link: '/blog/solana-trading-bots',
-    uid: 'blog-3',
-  },
+    title: 'Why La Masia Favors Shorter Players',
+    description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
+    link: '/blog/why-la-masia-favors-shorter-players',
+    uid: 'blog-la-masia',
+  }
 ]
 
 export const SOCIAL_LINKS: SocialLink[] = [
@@ -100,6 +131,10 @@ export const SOCIAL_LINKS: SocialLink[] = [
   {
     label: 'LinkedIn',
     link: 'https://www.linkedin.com/in/jorge-cambra-5a4b30234/',
+  },
+  {
+    label: 'Stack Overflow',
+    link: 'https://stackoverflow.com/users/20816738/jorge-cambra',
   },
 ]
 
