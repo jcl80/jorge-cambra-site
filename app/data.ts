@@ -120,7 +120,13 @@ export const BLOG_POSTS: BlogPost[] = [
     description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
     link: '/blog/why-la-masia-favors-shorter-players',
     uid: 'blog-la-masia',
-  }
+  },
+  {
+    title: 'How Rare Was Houston’s 27-Miss Three-Point Streak? A Minimal Math Dive',
+    description: 'May 28, 2018. Houston Rockets. Game 7. The team missed 27 consecutive three-point shots, a record-setting streak that left fans and analysts in disbelief. But how rare is such a streak?',
+    link: '/blog/houston-rockets-27-miss-three-point-streak',
+    uid: 'blog-rockets-streak',
+  },
 ]
 
 export const SOCIAL_LINKS: SocialLink[] = [

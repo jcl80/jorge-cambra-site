@@ -1,0 +1,134 @@
+<Cover
+  src="/images/gettyimages-961547062.webp"
+  alt="Houston Rockets players during Game 7"
+  caption="Image via gettyimages"
+/>
+
+# How Rare Was Houston's 27-Miss Three-Point Streak? A secondary analysis 
+
+## 1. What Actually Happened (HSR vs HOU, Game 7, 2018)
+
+On May 28, 2018, the Houston Rockets set an NBA record for futility:
+They missed 27 consecutive three-pointers in Game 7 of the Western Conference Finals against the Golden State Warriors.
+
+Fans and analysts called it one of the most improbable cold streaks in playoff history, and headlines shouted odds like "1 in 72,000."
+
+But how rare was it, really?
+Let's go beyond the headlines and do the math.
+
+## 2. Where Did the "1 in 72,000" Headline Come From?
+
+Multiple major outlets, mostly taking their info from [FiveThirtyEight](https://fivethirtyeight.com/features/the-odds-of-the-rockets-missing-that-many-3s-1-in-72000/), cited the number "1 in 72,000" as the odds of this happening.
+But what does that really mean?
+
+That number is closely based on the probability that a 36% three-point shooting team (Houston's average that season) would miss 27 threes in a row — if they took only 27 shots:
+
+**P = (1 - 0.36)²⁷ = 0.64²⁷ ≈ 0.000015 (about 1 in 66,000)**
+
+That's mind-blowingly rare.
+But Houston attempted 44 threes in that game. With more attempts, you get more chances for a streak like this to happen.
+
+## 3. The Union Bound: "Just Multiply By The Number of Windows!"
+
+Some people, including sharp Redditors at the time ([check this reddit thread](https://www.reddit.com/r/nba/comments/8n0cgc/comment/dzrt9o9/))
+pointed out that in 44 attempts, there are multiple places where a 27-miss streak could occur:
+
+There are 18 windows (from shot 1 to 27, 2 to 28, …, 18 to 44) where you could miss 27 in a row.
+
+If you multiply the probability by the number of windows (known as the union bound):
+
+**P ≈ 18 × 0.000015 = 0.00027 (about 1 in 3,600 games)**
+
+This is much more common than the headline number—but it massively overestimates the true probability.
+
+# Why the Union Bound Fails Here
+
+The thing is , for you to miss exactly 27 consecutive shots (say shots 10-36), you actually only satisfy one window.
+
+The union bound overcounts because longer streaks satisfy multiple windows simultaneously. For example:
+
+If you miss 30 consecutive shots (shots 8-37), you satisfy windows 8, 9, 10, and 11 all at once.
+The union bound counts this as 4 separate events, when it's really one unlucky streak.
+
+## 4. The Actual Probability (Python + Dynamic Programming)
+
+The real question is:
+
+What's the probability that a 36% shooter, over 44 threes, will suffer at least one streak of 27 consecutive misses, anywhere in the game?
+
+To answer this exactly, you need to account for overlapping streaks and dependencies.
+This is where dynamic programming (DP) and simulation come in.
+
+
+# Monte Carlo Simulation Approach
+We can simulate thousands of "games," and count how often a 27-miss streak shows up:
+
+```python
+import random
+
+def monte_carlo_streak(N=44, streak_len=27, p=0.36, trials=100_000):
+    streak_found_count = 0
+    for trial in range(trials):
+        shots = [1 if random.random() > p else 0 for _ in range(N)]
+        max_streak = 0
+        current_streak = 0
+        for shot in shots:
+            if shot == 1:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+        if max_streak >= streak_len:
+            streak_found_count += 1
+    probability = streak_found_count / trials
+    print(f"Monte Carlo estimated probability: {probability:.8f}")
+    print(f"That's about 1 out of every {1/probability:.1f} games.") 
+    return probability
+
+    <- Expect ~1 out of 24,000
+
+monte_carlo_streak()
+```
+
+# Dynamic Programming Approach
+
+The mathematically exact way is to use DP, which efficiently counts every possible scenario without double-counting overlaps:
+
+```python
+import numpy as np
+
+def dp_streak_exact(N=44, streak_len=27, p=0.36):
+    q = 1 - p
+    dp = np.zeros((N+1, streak_len+1))
+    dp[0][0] = 1.0
+    for i in range(1, N+1):
+        for j in range(streak_len):
+            dp[i][0]    += dp[i-1][j] * p
+            dp[i][j+1]  += dp[i-1][j] * q
+        dp[i][streak_len] += dp[i-1][streak_len]
+    probability = dp[N][streak_len]
+    print(f"DP exact probability: {probability:.8f}")
+    print(f"That's about 1 out of every {1/probability:.1f} games.")
+    return probability
+
+     <- This will always be 1 out of 24024
+dp_streak_exact()
+```
+
+# What's the Answer?
+The probability comes out to about:
+
+**1 in 24,000**
+
+Still historic, but much more likely than the "1 in 72,000" you might see in the headlines back in the day.
+
+# 5. Why Are the Numbers So Different?
+
+The "1 in 72,000" is for missing 27 straight with only 27 attempts.
+
+The union bound ("1 in 3,600") overcounts by pretending each possible window is independent, when they actually overlap.
+
+The real answer (1 in 24,000) is higher than the pure-streak case, but much less frequent than the union bound estimate.
+
+This difference is all about overlapping windows—if you miss 28 or more straight, you're not just unlucky once, you fulfill the streak for several windows at the same time!!
+
