@@ -281,7 +281,21 @@ export default function Personal() {
         variants={VARIANTS_SECTION}
         transition={TRANSITION_SECTION}
       >
-        <h3 className="mb-3 text-lg font-medium">Blog</h3>
+        <h3 className="mb-3 flex items-baseline justify-between text-lg font-medium">
+  <span>Blog</span>
+  <Link
+    href="/blog"
+    className="group inline-flex items-center rounded-md px-1 -mx-1 text-sm
+               text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/40"
+    aria-label="View all blog posts"
+  >
+    View all
+    <svg viewBox="0 0 15 15" className="ml-1 h-3 w-3 transition-transform group-hover:translate-x-0.5">
+      <path d="M3.65 11.35a.5.5 0 0 1 0-.7L10.29 4H6a.5.5 0 0 1 0-1h5.5a.5.5 0 0 1 .5.5V9a.5.5 0 0 1-1 0V4.71l-6.65 6.64a.5.5 0 0 1-.71 0z" fill="currentColor"/>
+    </svg>
+  </Link>
+</h3>
         <div className="flex flex-col space-y-0">
           <AnimatedBackground
             enableHover
