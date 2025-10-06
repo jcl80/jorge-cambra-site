@@ -4,6 +4,7 @@ import './globals.css'
 import { Header } from './header'
 import { Footer } from './footer'
 import { ThemeProvider } from 'next-themes'
+import { PostHogProvider } from '../components/PostHogProvider'
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -36,7 +37,8 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: 'Jorge Cambra - Software Engineer',
-    description: 'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+    description:
+      'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
     url: 'https://jorgecambra.com',
     siteName: 'Jorge Cambra',
     images: [
@@ -53,7 +55,8 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'Jorge Cambra - Software Engineer',
-    description: 'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+    description:
+      'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
     images: ['/images/jcl80.png'],
   },
 }
@@ -78,20 +81,22 @@ export default function RootLayout({
       <body
         className={`${geist.variable} ${geistMono.variable} bg-white tracking-tight antialiased dark:bg-zinc-950`}
       >
-        <ThemeProvider
-          enableSystem={true}
-          attribute="class"
-          storageKey="theme"
-          defaultTheme="system"
-        >
-          <div className="flex min-h-screen w-full flex-col font-[family-name:var(--font-inter-tight)]">
-            <div className="relative mx-auto w-full max-w-screen-sm flex-1 px-4 pt-20">
-              <Header />
-              {children}
-              <Footer />
+        <PostHogProvider>
+          <ThemeProvider
+            enableSystem={true}
+            attribute="class"
+            storageKey="theme"
+            defaultTheme="system"
+          >
+            <div className="flex min-h-screen w-full flex-col font-[family-name:var(--font-inter-tight)]">
+              <div className="relative mx-auto w-full max-w-screen-sm flex-1 px-4 pt-20">
+                <Header />
+                {children}
+                <Footer />
+              </div>
             </div>
-          </div>
-        </ThemeProvider>
+          </ThemeProvider>
+        </PostHogProvider>
       </body>
     </html>
   )
