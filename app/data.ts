@@ -32,16 +32,23 @@ export const PROJECTS: Project[] = [
   {
     name: 'NBA Hot-Streak Tracker',
     description: 'Live NBA analytics tool for tracking player hot streaks and performance metrics.',
-    link: '#',
+    link: 'https://hotstreak.jcl80.com/',
     video: '/videos/HotStreak_compressed.mp4',
     id: 'project1',
   },
   {
-    name: 'Multi-Store Ecommerce Platform',
-    description: 'Production-grade classified ads platform with multi-store support, secure checkout, and comprehensive admin dashboard.',
-    link: '#',
+    name: 'Trato Hecho PY',
+    description: 'Production-grade classified ads  and marketplace platform with multi-store support, secure checkout, and comprehensive analytics.',
+    link: 'https://tratohecho.com.py/',
     video: '/videos/prueba_portfolio_trimmed.mp4',
     id: 'project2',
+  },
+  {
+    name: 'Tienda Paraguaya',
+    description: 'A fast, localized e-commerce brand for Paraguay, built on top of MedusaJS, integrated with Bancard checkout and PostHog analytics.',
+    link: 'https://tiendaparaguaya.com/py',
+    video: '/videos/tienda_paraguaya_quick_demo.webm',
+    id: 'project3',
   },
 ]
 
