@@ -1,0 +1,339 @@
+<Cover
+  src="/images/eren-namli-kqmGszRyMFk-unsplash.jpg"
+  alt="Medusa e-commerce backend deployed on DigitalOcean"
+  caption="Photo by Eren Namlı on Unsplash"
+/>
+
+# Notes on Running a Medusa Backend on DigitalOcean App Platform
+
+I've deployed the starter Medusa e-commerce backend to **DigitalOcean App Platform** a couple of times now, and every time I forget the small details and waste time re-discovering them.
+
+This is not "the ultimate Medusa guide." It's literally **notes for future me** (and whoever is doing something similar) about which parts worked out of the box and which ones I had to tweak to make Medusa behave nicely with:
+
+- DO **App Platform** (buildpacks, not a droplet)
+- DO **Managed Postgres**
+- DO **Managed Valkey (Redis)**
+- DO **Spaces** for file storage
+- A separate storefront on a custom domain
+
+---
+
+## Stack Overview
+
+**Backend:**
+
+- Medusa v2 backend
+- Deployed as a **Web Service** on DigitalOcean App Platform
+- Runtime: **Node 20**, using **buildpacks**
+- Database: DO **Managed Postgres**
+- Cache / queues: DO **Managed Valkey** (Redis compatible)
+- File storage: DO **Spaces** (S3-compatible)
+- Custom domain: `api.yourdomain.com`
+
+**Storefront (very short version):**
+
+- Medusa storefront running separately
+- Configured to talk to `https://api.yourdomain.com`
+- `next/image` configured to allow your Spaces bucket/CDN domains
+
+The storefront is almost vanilla, the interesting part (for me) was the backend on App Platform.
+
+---
+
+## Non-Obvious Backend Changes I Had to Make
+
+### 1. Use Buildpacks + Yarn + Node 20 (No Dockerfile)
+
+**What I used:**
+
+- DO **App Platform** Web Service
+- **Buildpacks** (DigitalOcean builds from `package.json`)
+- **Yarn** + **Node 20**
+
+**What I actually did:**
+
+- Deleted my `Dockerfile` from the repo
+- Removed `package-lock.json` and kept only `yarn.lock`
+- Configured the service to use **Node 20**
+
+**Why:**
+
+- Medusa v2 is happier on Node 20 than on older images.
+- If you keep both `yarn.lock` and `package-lock.json`, App Platform can pick the wrong tool/lockfile.
+- Using buildpacks means DO handles the Node environment for you; you just tell it how to start the app.
+
+From there, the **Run Command** in App Platform can be as simple as:
+
+```bash
+npx medusa db:setup && npx medusa start
+```
+
+---
+
+### 2. Managed Postgres: SSL + Connection Pooling
+
+**What I used:**
+
+- DO Managed Postgres
+- A single `DATABASE_URL` env var, something like:
+
+```
+DATABASE_URL=postgresql://<user>:<password>@<host>:<port>/<db>?sslmode=require&application_name=medusa
+```
+
+**What I changed in `medusa-config.ts`:**
+
+Point Medusa to that URL and configure SSL + pool options:
+
+```typescript
+const projectConfig = {
+  // ...
+  databaseUrl: process.env.DATABASE_URL,
+  databaseDriverOptions: {
+    connection: {
+      ssl: {
+        // DO managed Postgres uses SSL; this avoids "self-signed certificate" issues
+        rejectUnauthorized: false,
+      },
+    },
+    pool: {
+      min: 0,
+      max: 15,
+      idleTimeoutMillis: 30000,
+      acquireTimeoutMillis: 60000,
+    },
+  },
+}
+```
+
+**Why:**
+
+- DO managed Postgres requires SSL by default, otherwise the pg driver complains.
+- Small managed instances have a limited number of connections; tuning the pool keeps Medusa from opening too many connections and hitting "too many connections" errors when the app restarts or scales.
+
+---
+
+### 3. Point Medusa to DO Valkey (Redis)
+
+**What I used:**
+
+- DO Managed Valkey (Redis compatible)
+- Env var:
+
+```
+REDIS_URL=rediss://<user>:<password>@<host>:<port>
+```
+
+**What I changed:**
+
+In `medusa-config.ts` explicitly set the Redis URL:
+
+```typescript
+const projectConfig = {
+  // ...
+  redisUrl: process.env.REDIS_URL,
+}
+```
+
+**Why:**
+
+- By default Medusa assumes a local Redis at `redis://localhost:6379`, which doesn't exist inside App Platform.
+- Background jobs, caches, and some features expect Redis; pointing `redisUrl` to the Valkey instance is required for things to actually work in production.
+
+---
+
+### 4. CORS for Store / Admin / Auth
+
+**What I used:**
+
+Define CORS domains via env vars:
+
+```
+STORE_CORS=https://yourdomain.com,https://api.yourdomain.com
+ADMIN_CORS=https://yourdomain.com,https://api.yourdomain.com
+AUTH_CORS=https://yourdomain.com,https://api.yourdomain.com
+```
+
+**What I changed:**
+
+In `medusa-config.ts`:
+
+```typescript
+const projectConfig = {
+  // ...
+  http: {
+    storeCors: process.env.STORE_CORS,
+    adminCors: process.env.ADMIN_CORS,
+    // if you wire auth CORS separately, same idea:
+    // authCors: process.env.AUTH_CORS,
+  },
+}
+```
+
+**Why:**
+
+- Your store frontend and API likely live on different domains.
+- Without proper `STORE_CORS` / `ADMIN_CORS` values, the browser will block requests with CORS errors even though the backend itself is fine.
+- Putting them in env vars makes it easy to tweak later without code changes.
+
+---
+
+### 5. File Storage with DigitalOcean Spaces (Medusa File Module)
+
+**What I used:**
+
+- DO Spaces bucket
+- Env vars like:
+
+```
+SPACES_FILE_URL=https://<bucket>.<region>.digitaloceanspaces.com
+SPACES_BUCKET=<bucket>
+SPACES_REGION=<region>
+SPACES_ENDPOINT=https://<region>.digitaloceanspaces.com
+SPACES_ACCESS_KEY_ID=<your-access-key>
+SPACES_SECRET_ACCESS_KEY=<your-secret-key>
+```
+
+**What I changed:**
+
+Use the S3 file provider via Medusa's File module:
+
+```typescript
+const modules = {
+  file: {
+    resolve: "@medusajs/medusa/file",
+    options: {
+      providers: [
+        {
+          resolve: "@medusajs/medusa/file-s3",
+          id: "spaces",
+          options: {
+            file_url: process.env.SPACES_FILE_URL,
+            bucket: process.env.SPACES_BUCKET,
+            region: process.env.SPACES_REGION,
+            endpoint: process.env.SPACES_ENDPOINT,
+            access_key_id: process.env.SPACES_ACCESS_KEY_ID,
+            secret_access_key: process.env.SPACES_SECRET_ACCESS_KEY,
+            additional_client_config: {
+              forcePathStyle: true,
+            },
+          },
+        },
+      ],
+    },
+  },
+}
+```
+
+**Why:**
+
+- Without a file provider, product images and uploads from the admin just fail.
+- DO Spaces is S3-compatible, so the S3 provider works fine as long as you plug in the right endpoint and creds.
+- `forcePathStyle: true` tells the S3 client to use path-style URLs (`https://endpoint/bucket/key`) instead of virtual-hosted-style (`https://bucket.endpoint/key`). DO Spaces works better with this for some operations.
+- The storefront then pulls those images from the Spaces URL (and you'll need to whitelist that domain in Next's `next.config` for `next/image`).
+
+---
+
+### 6. Extra Modules (Fulfillment, Inventory, Stock Location)
+
+I had to add these modules to get everything working properly:
+
+```typescript
+modules: [
+  {
+    resolve: "@medusajs/medusa/fulfillment",
+    options: {
+      providers: [
+        {
+          resolve: "@medusajs/fulfillment-manual",
+          id: "manual",
+        },
+      ],
+    },
+  },
+  // ... file module from above ...
+  { resolve: "@medusajs/inventory", options: {} },
+  { resolve: "@medusajs/stock-location", options: {} },
+]
+```
+
+**Why:**
+
+- `@medusajs/fulfillment-manual` - Needed for basic order fulfillment to work.
+- `@medusajs/inventory` and `@medusajs/stock-location` - Required for inventory tracking. Without these, product stock management won't work.
+
+---
+
+### 7. Secrets: JWT and Cookie
+
+Medusa also needs a couple of secrets for authentication and sessions. These go inside the `http` block in `medusa-config.ts`:
+
+```typescript
+http: {
+  storeCors: process.env.STORE_CORS!,
+  adminCors: process.env.ADMIN_CORS!,
+  authCors: process.env.AUTH_CORS!,
+  jwtSecret: process.env.JWT_SECRET || "supersecret",
+  cookieSecret: process.env.COOKIE_SECRET || "supersecret",
+},
+```
+
+Then set the env vars:
+
+```
+JWT_SECRET=<random-secure-string>
+COOKIE_SECRET=<random-secure-string>
+```
+
+Nothing fancy - just generate some random strings. Don't use `supersecret` in production.
+
+---
+
+### 8. NODE_TLS_REJECT_UNAUTHORIZED (The Lazy Escape Hatch)
+
+Sometimes when I'm debugging SSL issues and just want things to work, I set:
+
+```
+NODE_TLS_REJECT_UNAUTHORIZED=0
+```
+
+This disables SSL certificate verification entirely. It's not something you want in production, but I'd be lying if I said I haven't left it on while building just to move past certificate headaches. If your Postgres or Redis connections are failing with SSL errors and you've tried everything else, this will get you unstuck (at the cost of security).
+
+---
+
+### 9. Simple Run Command on App Platform
+
+The final **Run Command** on App Platform is just:
+
+```bash
+npx medusa db:setup && npx medusa start
+```
+
+**Why:**
+
+- App Platform already injects all env vars into `process.env`, so Medusa can read `process.env.DATABASE_URL`, `REDIS_URL`, etc. directly.
+- You don't need to generate a `.env` file inside the container; that's only useful temporarily while debugging.
+- Running `medusa db:setup` on startup keeps migrations/seed up to date whenever you deploy.
+
+---
+
+## Tiny Note on the Storefront
+
+On the storefront side you don't need anything special beyond:
+
+- Pointing the frontend to the backend URL (e.g. `NEXT_PUBLIC_MEDUSA_BACKEND_URL=https://api.yourdomain.com`)
+- Allowing your DO Spaces domains in `next.config.mjs` so `next/image` can load product images
+
+Everything else is basically the standard Medusa Next.js storefront behavior.
+
+---
+
+## Wrapping Up
+
+These notes are enough to re-deploy this whole thing later without going back to trial-and-error.
+
+If you ever forget how the pieces fit together, the important bits are: **buildpacks + Yarn + Node 20**, **Postgres SSL + pool**, **Redis URL**, **CORS**, **Spaces file provider**, and a **simple run command**.
+
+---
+
+Apologies if any of this isn't totally correct, or if some steps are missing or unclear. I was just writing this as personal notes and figured, hey, why not just share it. Hopefully it saves someone a few hours of trial and error.

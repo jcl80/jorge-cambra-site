@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Notes on Running a Medusa Backend on DigitalOcean App Platform',
+    description: 'Quick notes on deploying a Medusa v2 e-commerce backend to DigitalOcean App Platform with managed Postgres, Valkey, and Spaces.',
+    link: '/blog/medusa-digitalocean-app-platform-notes',
+    uid: 'blog-medusa-do',
+  },
+  {
     title: 'Why La Masia Favors Shorter Players',
     description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
     link: '/blog/why-la-masia-favors-shorter-players',
