@@ -123,22 +123,28 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Some Thoughts on Déjà Vu',
+    description: 'The feeling of having already experienced the present moment.',
+    link: '/blog/deja-vu',
+    uid: 'blog-deja-vu',
+  },
+  {
     title: 'Notes on Running a Medusa Backend on DigitalOcean App Platform',
     description: 'Quick notes on deploying a Medusa v2 e-commerce backend to DigitalOcean App Platform with managed Postgres, Valkey, and Spaces.',
     link: '/blog/medusa-digitalocean-app-platform-notes',
     uid: 'blog-medusa-do',
   },
   {
-    title: 'Why La Masia Favors Shorter Players',
-    description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
-    link: '/blog/why-la-masia-favors-shorter-players',
-    uid: 'blog-la-masia',
-  },
-  {
     title: 'How Rare Was Houston’s 27-Miss Three-Point Streak? A Minimal Math Dive',
     description: 'May 28, 2018. Houston Rockets. Game 7. The team missed 27 consecutive three-point shots, a record-setting streak that left fans and analysts in disbelief. But how rare is such a streak?',
     link: '/blog/houston-rockets-27-miss-three-point-streak',
     uid: 'blog-rockets-streak',
+  },
+  {
+    title: 'Why La Masia Favors Shorter Players',
+    description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
+    link: '/blog/why-la-masia-favors-shorter-players',
+    uid: 'blog-la-masia',
   },
 ]
 
