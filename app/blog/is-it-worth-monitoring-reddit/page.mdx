@@ -1,0 +1,115 @@
+# Is It Worth Monitoring Reddit?
+
+*This write-up is an attempt to answer a practical question: is it worth spending engineering time and compute to monitor Reddit at scale?*
+
+I'm working on a Reddit monitoring pipeline for Sentinel-style foresight ([sentinel-team.org](https://sentinel-team.org/)). The question I'm trying to answer: can this plausibly help us catch developments that could affect ≥1M people, early enough that it changes what we do next (investigate, corroborate, brief, escalate, etc.)?
+
+My current take is: absolutely yes. Even before you get fancy, Reddit's sheer size and its niche community structure make it a great place to surface public sentiment, threat/news aggregation, and (in the right communities) high-quality domain context (I've personally spent an embarrassing amount of time in r/Anthropology, r/AskHistorians, and r/LocalLLaMA.)
+
+The main challenges are:
+
+- **Coverage** — which subreddits matter, and how do you keep that list current?
+- **Volume** — Reddit generates enormous amounts of data
+- **Speed** — detection value decays fast; you need near-real-time ingestion and analysis
+- **Signal discipline** — separating noise and misinformation from quality data is hard, but it's also where the leverage is
+
+## Why Reddit Has Structural Advantages as a Sensor
+
+Reddit has a few structural properties that make it unusually useful for monitoring, especially compared to "one big feed" platforms:
+
+- **Pseudonymity + niche focus** — people will say things on Reddit (and in very specific subcultures) that they won't say under real identity or on more status-driven platforms. That produces early, candid traces—sometimes from domain insiders, sometimes from communities experimenting with tactics or narratives.
+
+- **Cross-platform convergence** — Reddit threads often act as "aggregation hubs" where screenshots, links, and clips from other platforms (Telegram, X, YouTube, Discord, etc.) get reposted and discussed. Monitoring Reddit can therefore surface developments happening off-Reddit without directly ingesting every other platform.
+
+- **Rapid propagation across communities** — ideas and narratives can jump quickly across subreddits via crossposts, linked threads, and shared commenters—making Reddit a good substrate for tracking how claims spread and where they first appear.
+
+## What Reddit Is Good For (and What It Isn't)
+
+Reddit is not a universal sensor. It's strongest when the thing you care about leaves social traces before it becomes legible to official channels.
+
+**High-ROI categories (for ≥1M impact):**
+
+- **Coordinated influence / narrative operations** — early "test runs," brigading, bot-driven amplification, and cross-subreddit coordination can show up before it spills into mainstream platforms or news. [[2]](https://arxiv.org/abs/2507.16857)
+- **Cyber & infrastructure signals** — niche technical communities often surface incidents, vulnerabilities, outages, or "something weird is happening" reports early (not always correct, but often early). [[3]](https://dl.acm.org/doi/10.1145/3350546.3352519)
+- **Slow-burn public health / safety signals** — emerging phenomena and risk behaviors sometimes surface in communities long before institutions react (useful as weak signals, not as truth). [[4]](https://www.sciencedirect.com/science/article/pii/S095539592100298X)
+- **Conflict escalation & local instability** — regional subreddits and adjacent communities can provide on-the-ground texture and early chatter (again: weak signals that require corroboration). [[5]](https://www.sciencedirect.com/science/article/pii/S2949719125000329)
+
+## Prior Evidence Reddit Can Surface Early Warning Signals
+
+*Some examples below come from peer-reviewed work; others are case studies or major journalism. Treat these as evidence that Reddit can be a useful signal stream,not as proof of prediction.*
+
+There are documented cases where Reddit acted as an early-warning layer, where weak signals appeared before they were widely legible elsewhere:
+
+- **Infectious disease surveillance (COVID)** — peer-reviewed research has examined Reddit as a supplemental surveillance stream for tracking infectious disease dynamics. Reddit contains large-scale, patient-reported experiences, including mild cases often missed by official reporting, enabling symptom and experience tracking over time. [[6]](https://www.nature.com/articles/s41598-023-39986-7)
+
+- **Slow-burn public health (new designer drugs)** — an academic study (Barenholtz et al. 2021) found that most new psychoactive substances examined were discussed on Reddit before official case reports, with Reddit discussion peaks appearing months ahead of real-world incident peaks. [[7]](https://pubmed.ncbi.nlm.nih.gov/34365124/)
+
+- **Research on cross-subreddit behavior has documented how coordinated campaigns can be detected through posting patterns, timing, and narrative propagation across communities. [[2]](https://arxiv.org/abs/2507.16857)
+
+- **Some work on social media and conflict dynamics shows that discussion sentiment and volume in conflict-related subreddits (e.g., r/syriancivilwar, r/ukraine) shifts in response to real-world events. [[5]](https://www.sciencedirect.com/science/article/pii/S2949719125000329)
+
+- **Cross-platform traces** — Reddit often becomes a convergence point where screenshots or links from other platforms (Telegram, X, YouTube, etc.) get reposted, meaning Reddit monitoring can indirectly surface developments happening in spaces you're not directly collecting from. [[11]](https://arxiv.org/abs/2409.15402)
+
+- **Reddit as catalyst (WallStreetBets/GameStop)** — the 2021 GameStop short squeeze demonstrated that niche communities can coordinate into outsized real-world impact. The SEC staff report documented how retail investor activity, much of it organized on Reddit, contributed to extraordinary market volatility. [[8]](https://www.sec.gov/files/staff-report-equity-options-market-structure-conditions-early-2021.pdf)
+
+- **Local / regional communities can surface actionable pointers fast** — in at least one high-profile case, a Reddit tip was publicly cited as an important lead in a law enforcement investigation involving a university community. The takeaway isn't "Reddit solves crimes," but that regional communities can surface early pointers quickly. [[9]](https://www.cbsnews.com/news/brown-university-reddit-tipster/)
+
+**A cautionary note:** Reddit has also produced high-profile false positives (e.g., the Boston Marathon bombing misidentification), which is a strong argument for verification, corroboration, and guardrails—one of our biggest challenges, separating noise from useful info. [[10]](https://www.businessinsider.com/reddit-falsely-accuses-sunil-tripathi-of-boston-bombing-2013-7)
+
+**Lower-ROI categories:**
+
+- **Instant, no-precursor events** (e.g., earthquakes) — Reddit can surface fast reports, but it's not uniquely predictive.
+- **Domains with strong dedicated sensors** (weather, obvious market data) — Reddit adds mostly reaction, rumor, and color.
+- **Closed-network coordination** (WhatsApp/Telegram-only) — Reddit may only provide indirect traces.
+
+The takeaway: Reddit is most useful as an early-warning and triage layer for socially mediated, slow-burn, or coordination-heavy threats. 
+
+## Coverage Isn't a Fixed List Problem
+
+Reddit is often described as having 100k+ active communities. In practice, that means "coverage" is not a fixed-list problem, but a moving target. Any serious monitoring effort needs both (a) a curated set of consistently high-signal subreddits and (b) a discovery layer that can notice newly created or suddenly active communities as they appear.
+
+This was basically the original shape of the project. When we first decided to do this, we weren't only trying to "monitor the big subs." We were trying to detect emergent, weird, and potentially high-impact patterns, like [AI-induced psychosis](https://www.lesswrong.com/posts/iGF7YcnQkEbwvYLPA/ai-induced-psychosis-a-shallow-investigation) and [AI parasitism](https://www.lesswrong.com/posts/6ZnznCaTcbGYsCmqu/the-rise-of-parasitic-ai).
+
+> **AI-induced psychosis** (as discussed in the linked write-up) refers to cases where AI interactions appear to reinforce or escalate delusional beliefs rather than grounding the user—often because the system is overly validating, roleplay-heavy, or fails at de-escalation.
+>
+> **AI parasitism** refers to a different failure mode: an AI persona (or "entity") that seems to use a user as a host, pushing behavior that helps the persona persist or spread—e.g., prompting the creation of new accounts, subreddits, repositories, or distribution hubs dedicated to the persona.
+
+In other words: some of the most important signals won't show up in "known important subreddits" at all. They show up first as new communities, new accounts, and fast-forming micro-cultures.
+
+## What "ROI" Looks Like for Sentinel-Scale Work
+
+For a ≥1M impact mission, it's important to keep in mind that some incident classes are already parsed at lightning speed by dedicated agencies or existing sensors. The ROI isn't "be first to notice anything."
+
+The ROI is maintaining a high-fidelity picture of threat emergence, sentiment shifts, expert context, and manipulation dynamics, especially where narrative pressure, coordination, or slow-burn risks scale before institutions fully react.
+
+## The ≥1M Impact Filter
+
+"Worth monitoring" depends on what you're optimizing for. For Sentinel-style foresight, the bar is not "interesting" or "newsworthy." The bar is: does this plausibly map to ≥1M people affected, or to a pathway that repeatedly produces ≥1M-scale harm?
+
+In practice, we treat a Reddit signal as priority if it hits at least one of these:
+
+- **Mass persuasion / manipulation capacity** — coordinated influence, narrative operations, bot amplification, targeted harassment at scale, election-related manipulation, or sustained shaping of public beliefs on high-stakes topics.
+- **Critical infrastructure fragility** — cyber incidents, outages, systemic vulnerabilities, operational failures, or credible reports of cascading disruption (energy, finance, communications, health systems).
+- **Rapidly scaling harmful behavior** — tactics or tools that spread fast (copycat dynamics), new operational playbooks, or "how-to" knowledge that can be industrialized.
+- **Escalation pathways** — coordination, recruitment, mobilization, or cross-platform movement (e.g., Reddit threads that point to Telegram/WhatsApp hubs where the real action happens).
+
+Important nuance: many real events don't meet this bar. A lot of "true" things are still low-impact. That's why the filter exists.
+
+A simple routing rule I use:
+
+> If it can't plausibly scale to ≥1M impact, it's not a top-tier signal (even if it's real).
+> If it can scale, then it's worth watchlisting, corroborating, or escalating depending on evidence quality.
+
+This is also why community selection matters: we care less about "general chatter everywhere," and more about high-signal communities and early pathway indicators.
+
+## Next
+
+This post is the argument for why it's worth monitoring Reddit at scale. The next posts will focus on the practical side: how to build a system that does this.
+
+Concretely, I'll write about:
+
+- **Coverage strategy** — how to combine a curated high-signal set with discovery for newly created / suddenly-active communities.
+- **Filtering and routing** — how to turn a firehose into a triage queue (clustering, anomaly detection, and simple operational heuristics).
+- **Signal discipline in practice** — how to handle misinformation, brigading, and adversarial behavior without becoming a dashboard for speculation.
+- **Lightweight evaluation** — how to sanity-check whether the system is actually surfacing earlier pointers (without claiming "prediction").
+

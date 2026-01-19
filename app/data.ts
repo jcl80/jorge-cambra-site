@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Is It Worth Monitoring Reddit?',
+    description: 'A strategic assessment of Reddit as an OSINT source for early-warning intelligence and risk detection.',
+    link: '/blog/is-it-worth-monitoring-reddit',
+    uid: 'blog-reddit-monitoring',
+  },
+  {
     title: 'Some Thoughts on Déjà Vu',
     description: 'The feeling of having already experienced the present moment.',
     link: '/blog/deja-vu',
