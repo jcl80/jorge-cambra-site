@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Potential Projects',
+    description: '',
+    link: '/blog/potential-projects',
+    uid: 'blog-potential-projects',
+  },
+  {
     title: 'Is It Worth Monitoring Reddit?',
     description: 'A strategic assessment of Reddit as an OSINT source for early-warning intelligence and risk detection.',
     link: '/blog/is-it-worth-monitoring-reddit',

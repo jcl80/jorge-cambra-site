@@ -23,6 +23,7 @@
     "posthog-node": "^5.9.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.5.5"
   },
   "devDependencies": {

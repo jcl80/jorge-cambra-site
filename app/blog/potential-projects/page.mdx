@@ -1,0 +1,340 @@
+# Potential Projects
+
+*Thist draft will go over some projects to analyze: "In what projects are Sentinel time and resources better employed"*
+
+<Cover
+  src="/images/project_images/Dependency_graph.png"
+  alt="Project dependency graph"
+/>
+
+# Foundation
+
+### 1 - Unified Integration Layer
+
+Right now every source is its own pipeline . Reddit works , and Eye-Of-Sauron and twitter-public tools are long running projects. When we add 4chan, it'll be another standalone thing.
+Then Telegram, then what the agent swarms discovers. At some point this becomes unmaintainable. I suspect it already is. 
+
+The idea : all sources output the same format , and get stored to the same DB. Adding a source might become writing or verifying and adapter. This sounds dead, but its the foundation
+for almost everything else in the document: 
+
+- Cross source anomaly detection (signal on 4chan correlated with spike on Telegram)
+- Forecasting bouts need unified data to consume
+- Auditors need structured predictions in one place.
+- Source adapters and agents needs a target schema.
+
+
+ **The main target** is making sure that the schema is flexible enough that we are not rebuilding when a new source arrives.
+(or, and might be even my preferance, that is easy to augment)
+
+Risks 
+
+- Overengineering or underengineering it.
+- Migration pain: current data needs to fit the new schema.
+
+### 2 - Integration of New Sources 
+
+#### Parse 4chan 
+
+Similar pipeline to Reddit. Public JSON API, no auth , scraping. Key difference : everything is anonyous and ephemeral. We need to poll and scrap frecuently.
+
+#### Non-Western Social Media
+
+China is the biggest target (Weibo , Douying , Wechat) . Also Russia (VK, Odnoklassniki) . Would be hard to pull this off tho. They are all unique 
+platforms with unique circumstances. We might also be in need of language experts, but then again, isnt this one of the main strenghts of llms, ai as a whole? This could be a good chance too 
+to try the adapters agents.
+
+---
+
+Currently every source is a one off. This is where the agent swarm idea comes in. Instead of building each adapter by hand, we build agents that discover and adapt to new sources. 4chan and non-western platforms are the need, the swarm might be the solution.
+
+I can see potential for people paying for this, but i do feel like it might be inmoral, and dangerous to do so. 
+
+
+**Source adapters**
+
+There's a middle step between "every source is custom code" and "agents that auto-discover everything." A standardized adapter interface , same schema out, different platform logic in. Each new source becomes a plug in. 
+We could open source the interface and let the community build adapters for platforms we dont have access or expertise for. We still need to figure out if we are actually scaling 
+to enought sources to justify the abstractions. Right now is overengineering,  but if we open source and this pick up steam , might prove valuable.
+
+# New Capabilities
+
+
+### 3 - Local AI Infrastructure
+
+We are spending from 3k month on API costs. 81% of that is the reddit triage pipeline. If local models can handle triage at acceptable quality, we could save some of that. The big question is , can they?
+We need to benchmark and test first. 
+
+Cloud Gpu rental, (VastAi, Digital Ocean) , let us test on real hardware for dollars. We can benchmark the whole app against them. 
+
+**What can be tested:** 
+
+- Current open weights models against gpt-5-mini for our stage 1 triage.
+
+- Quantized vs full precision : how much of a quality gap?
+ 
+- Different hardware tiers: can a consumer model do shit? 
+
+ - If results are promising: fine tune a small , and a bigger model on our labeled triage data (and the data qualified by the top-notch models) . Would love some human supervition too though. 
+
+**What we learn:** 
+
+- Quality of each model and setup
+- Whether fine tuning closes the gap.
+ - The actual costs , and if they amortize over time.
+ - If buying hardware makes sense at all , and if so , what kind. 
+
+If local models work for a triage , a 2k gpu pays for itself in a month. If we need , an h100, thats a bigger analysis. In the worst of cases, we would have some nice benchmarsk that can be sold/shared, and potentially migrate to rental gpus.
+
+**Models to start with:** Qwen3, DeepSeek V3.2, Mistral Small 3. The Chinese open-source models have caught up to frontier performance on several benchmarks, and MoE architectures (big model, few active parameters) mean they can run on smaller hardware.
+
+If fine-tuning works, the resulting model is itself a contribution: an open-source GCR triage model trained on real data. Could share it, publish results, or use it as a credibility signal.
+
+If the goal is experimentation, learning, and fun, I'm more than happy to do that on local consumer hardware while running the serious benchmarks on rented cloud GPUs.
+
+### 4 - Forecasting Model/Agent
+
+Opportunity: AIA Forecaster is already at human superforecaster parity. OpenForecaster (open-source, 8B params) demonstrated automated question generation from news. Metaculus FutureEval projects AI surpassing community forecasters by April 2026.
+
+Sentinel collects and analyze data. We have access to superforecasters, and a growing OSINT pipeline. If forecasting is being automated, then why dont be a part of the race? There 
+is a clear overlap between sentinel current needs and what is needed for a forecasting ensemble : data collection, data analysis, question generation , resolution criteria definition, calibration tracking, source credibility scoring, and temporal pattern detection. 
+
+#### What/who could this be useful for? 
+
+- Sentinel forecasters : Ai teammate that helps the whole way. Also a benchmark : Is there anything original going on here? 
+- As an org: Externally verifiable forecasting accuracy via prediciton markets and public benchmarks. 
+- GCR community : might be the first open source forecasting agent specifically trained/tuned on catastrophic risk signals
+- We could contribute to public datasets , eg : HugginFace collections
+
+#### What would we be building:
+
+Multiple instances of forecasting agents , running against the same question sets as our human forecasters, and public ones. 
+
+---
+
+## Core components
+
+**Questions dataset:** 
+
+-Manually created by forecasters. (probably we will need to move current operations to DB storage)
+-Autogenerated from OSINT signals 
+
+#### Multiple bot architectures:
+
+
+| Bot | Approach | Why include it |
+|-----|----------|----------------|
+| Baseline | GPT-4/Claude direct prompt with question + context | Cheap, establishes floor |
+| RAG bot | Same model but retrieves from our OSINT event database before answering | Tests whether our proprietary data adds value |
+| Agentic bot | Multi-step: searches web, reads our signals, reasons step-by-step, produces calibrated probability | Closest to AIA Forecaster approach |
+| Ensemble | Weighted average of the above + human forecasters | Tests if combination beats any individual |
+
+<details>
+<summary>How could we score/benchmark?</summary>
+
+- Brier score per bot, per question, rolling windows (30d, 90d, lifetime)
+- Calibration curves per bot 
+- Head-to-head: human team vs each bot vs ensemble
+- Domain breakdown: which bot is best on bio questions? Nuclear? AI?
+- Update frequency: do bots that update more often perform better?
+Gaming: bots anchor human forecasters . Show bot predictions to forecasters only after they submit their own. Or run blind and reveal comparisons weekly. 
+
+</details>
+
+<details>
+<summary>Other approaches</summary>
+
+- ** Prediction market validation might be in the cards. But , we could start only with: do the bots work on our questions? do they work on public benchmark and competitions?
+- **Fine-tuned models.** We use off-the-shelf LLMs with good prompting and RAG. Fine-tuning would be the next step if this approach shows promise.
+
+</details>
+
+## Possible results
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Bots are worse than humans on GCR questions | Medium | We publish it. Shows our human forecasters add value. GCR questions are exactly where humans might retain an edge (unprecedented events, thin data). |
+| Bots are better than humans | Low severity, high importance | Also a valid finding. Shifts forecaster role to question generation, resolution criteria, and meta-level oversight . Still, this is one of the fields in wich i wouldnt trust an agent without human oversight|
+| Not enough resolved questions for meaningful scoring | High | GCR questions resolve slowly. Mitigate by running bots on faster resolving questions (weekly/monthly horizons). Mix of fast and slow resolving questions. |
+
+### 5 - Forecast Auditor + Manipulation Detection
+
+Opportunity: Long-range, high-stakes predictions may reflect motivated reasoning more than calibrated judgment. https://www.sciencedirect.com/science/article/abs/pii/S0169207024001250
+
+The problems are varied: honest biases (anchoring, neglecting base rates), motivated reasoning (forecasters who work on a risk domain overestimate that risk because their career depends on it), deliberate manipulation, and herding.
+Current platforms score accuracy after resolution , but questions may not resolve for years. By the time you know a forecast was wrong, the consequences are already here.
+
+If we detect someone is manipulating a forecast, that's a signal. Someone pushing predictions about a specific nuclear scenario is telling us something about their intent or information. Detection then might become an input to our pipeline.
+
+---
+
+## What would we be building 
+
+**Bias detection engine:**
+
+
+| Check | What it catches (examples) |
+|-------|-----------------|
+| Anchoring | Forecast suspiciously close to a salient number or recent headline |
+| Herding | Forecast close to consensus with no independent reasoning |
+| Outlier | Far from consensus with weak reasoning |
+| Motivated reasoning | Forecaster consistently over/under-estimates risks in their own domain |
+| Reasoning quality | Model scores reasoning against forecasting best practices |
+
+**Manipulation detection:**
+
+| Pattern | What it means |
+|---------|---------------|
+| Coordinated movement | Multiple forecasters shift the same question, same direction, short window |
+| Strategic timing | Big probability shifts right before a question gets cited in a report |
+| Information asymmetry | Large confident update with no public info to justify it |
+| Narrative planting | Forecasts that consistently push one specific worldview across multiple questions |
+
+
+Flagged forecasts go to analyst review. Confirmed manipulation gets injected back into the OSINT pipeline as a signal.
+
+**Dependencies:**
+
+- Might go along great with competing bots projects.
+- Analysts time for flag review
+
+This would run against public platforms: Metaculus, Polymarket, AI CEO predictions. Could also be useful internally for our own forecasters.
+
+### 6 - FermiBench
+
+Build a benchmark for how good Ai models are at Fermi estimates. Ideally , we would have a big set of questions where you just cant look it up or throw stones, but you need to decompose, 
+reason , and estimate. 
+
+The final number isnt the only thing worth scoring, in fact, it seems like the second order of importance. The measurement of the decomposition of the final variable into the important factors 
+is the real target. Unless we think that the models can already have encoded this in the weights right? 
+
+The model that breaks down "Iran population" -> "Iran iq" -> "Iran rate of engineers" -> "Iran emigration rate of qualified workers" to get to "there could be a maximum of 200 really dangerous engineers currently working on taking down the grid in Texas as payback for the bombing"
+as an answer to the question "how many qualified engineers could the Iran regime destinate to work on taking down Texas grid" is more valuable than the one just saying 200.
+
+Given that models are better forecasters each month, this benchmark could be saturated from the start. 
+
+Frontier models are probably going to crack the questions and steps generated by Claude Code or Codex and their underlying models fairly easily, but thats just my early estimation (dont think Fermi applies to this one tho).  As a result, pulling this off might take significant work.
+
+**We could make the benchmark score 3 things**
+
+- Decomposition quality: did the model break down the question into reasonable sub questions?
+- Sub questions estimates accuracy : for each step, how close to the verifiable answer?
+- Final answer accuracy
+ 
+**What would we build?**
+
+- Testing harness to run any models , local or api based
+- Structured output parsing : the model needs to return decomposition steps and extract sub estimates and final numbers . 
+- Scoring engine 
+- Comparison charts
+ - Make easy for forecasters to add questions. It would be nice, even get people to create its own private benchmark questions
+
+**What could this be useful for:**
+
+- We might embark into building our own harness/finetune for forecasting, so this would be an useful benchmark.
+- The value might be in finding clearly where models fail, and i expect more value if we are able to inject it into our own workflows/models.
+
+**Other considerations:** 
+
+- We have a lot of questions that need answers , so naturally we would have a big bank of data to run backtesting on it.
+- We are also generating a lot of synthetic data through all the llm analysis our systems already generate, 
+so more data to power the benchmarks. (preferably human anotated , if possible)
+- If my gut is right, this might take time for forecasters/Nuno to create well thought out questions and scenarios, due to syntethic data with little human oversight not being enought for a good benchmarks.
+
+
+### 7 - Agent Swarm
+
+Opportunity: Every source we monitor points to other sources. A Reddit thread links a Telegram channel. A 4chan link points to an obscure forum.
+In dangerous sources, these findings could be invaluable. We could end up in rooms where strategies to manipulate the market are discussed, where open source devs discuss a new hard to believe finding, you get the gist.
+
+The GRC relevant internet behaves like a network, and we can potentially map it.
+
+We could automate the finding where threat relevant discussions are happening.
+
+### What would we be building?
+
+A system of automated agents that would:
+
+- Crawl monitored sources (Reddit, 4chan, public Telegram channels), and follow the outbound links to other platforms.
+- Classify monitored sources by GCR relevance using LLMs (is this group sharing something unknown publicly? Is coordination happening here?)
+- Auto-join.
+- Keep lightweight monitoring on chill subs, higher quality on prospectively dangerous ones.
+- Map the network (how information flows, where it originated, can it be traced?)
+- Surface high signal discoveries to higher level analysis, and analysts feedback.
+
+The magic of the agent is that we can enter and behave in the group as a regular member.
+They would have access to http scrapers, bot accounts, several platform specific techniques, and in some cases , login and auth.
+
+Over time, we build a map of information flow. When something pops up on Telegram, and 2 days later on Reddit, we can see the propagation path.
+When a new source gets referenced by multiple monitored accounts, we catch it early.
+
+
+## Risks
+
+| Risk | Detail | Mitigation |
+|------|--------|------------|
+| Ethical/legal | Crossing into private spaces | — |
+| Noise | Most discovered sources are irrelevant | Filtering + LLM triage |
+| Reputation | "Sentinel is running spy bots" | — |
+| Scale | Too many sources | LLM reviews + basic heuristics |
+
+## Success metrics
+
+- Discovery lead time: how far before a source becomes mainstream did we find its existence?
+- Analysts accept rate: what % of surfaced discoveries do analysts mark as worth monitoring?
+- Network coverage: how many relevant sources are we monitoring? How many do we estimate exist?
+- Signal origination: how far back can we track a signal to a discovered source, after it was seen in a mainstream source?
+
+## Dependencies
+
+- Proxy infrastructure for rate limit managers
+- Unified event schema
+
+## Questions
+
+- Do we tell anyone we do this?
+- Should we review platform adapters?
+
+# Vision
+
+### 8 - World State Platform 
+
+A platform where all GCR and potentially relevant data lives, forecasters and the public track the state of the world, and people can run simulations on real data.
+
+lets visualize it: you can see the current threat landscape acrros domains. Each signal traced to a legitimate source. Forecasts updating in real time. Someone runs a visualization, can be picked from 
+the already generated questions , or create a new one. "if india-pakistan nuclear exchange, what happens to global food supply in 6 months". The system pulls real data, run it throught our models. 
+and gives you scenarios, while updating the questions data.
+
+- What would include: all OSINT signals from every source, using the unified layer.
+- Forecasting agents running.
+- Conditional and cascading forecasts.
+- Adversarial simulations : AI agents playing good and bad actors in post-catastrophe scenarios, using real data as starting conditions.
+- Public facing layer, where people contribuite , challenge and improve the analysis.
+
+Does anybody has anything like this? I think not, but need more exploration and inspiration.
+
+This is too ambitious of a project, but this is the moment to be ambitious, if it ever was. How is that Sam Altman says? "Ai will probalby lead to the end of the world, but in the meantime, there will be great companies created" (paraphrasing)
+
+**So, an MVP:**
+
+- 2-3 forecasting bots creating and answering questions.
+- A simple world state view: top signals this week, current forecasts, what changed. 
+- Conditional forecasting chains examples . 
+- Public read access.
+- Maybe some collaboration tooling? eg: ask questions ? 
+
+Risks: Too big of a scope, little usefulness
+
+---
+
+## Scorecard
+
+| # | Project | Usefulness | Difficulty | Fun |
+|---|---------|------------|------------|-----|
+| 1 | Unified Integration Layer | Very High | Mid | Mid |
+| 2 | Integration of New Sources | Very High | Mid | High |
+| 3 | Local AI Infrastructure | Mid to Very High | Mid to unknown | Very High |
+| 4 | Forecasting Model/Agent | Very High | Very High | Almost Very High |
+| 5 | Forecast Auditor + Manipulation Detection | Low to Mid | High | Mid |
+| 6 | FermiBench | High | Mid to High | Mid to High |
+| 7 | Agent Swarm | High | Very High | Mid |
+| 8 | World State Platform | Very High | Very High | High |
