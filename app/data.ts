@@ -123,6 +123,18 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Songs That Have Me on the Brink of Buying an Electric Guitar',
+    description: '',
+    link: '/blog/songs-electric-guitar',
+    uid: 'blog-songs-electric-guitar',
+  },
+  {
+    title: 'Thoughts Worth Developing for a Recently Memory-Wiped Human',
+    description: '',
+    link: '/blog/thoughts-for-a-memory-wiped-human',
+    uid: 'blog-memory-wiped-thoughts',
+  },
+  {
     title: 'Potential Projects',
     description: '',
     link: '/blog/potential-projects',
