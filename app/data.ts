@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 0',
+    description: 'Preliminary benchmarks of open-weight models for replacing GPT models in Sentinel\'s threat detection pipeline.',
+    link: '/blog/offloading-sentinel-local-inference-part-0',
+    uid: 'blog-sentinel-local-inference-0',
+  },
+  {
     title: 'Songs That Have Me on the Brink of Buying an Electric Guitar',
     description: '',
     link: '/blog/songs-electric-guitar',

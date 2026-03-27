@@ -1,0 +1,312 @@
+**DRAFT** — This post is a work in progress. While the general results are mostly in line with what I believe are the final results, the math might be a bit off.
+
+# Offloading Sentinel's Analysis Pipeline to Local Inference - Part 0
+
+*Preliminary benchmarks of open-weight models for replacing GPT models in Sentinel's threat detection pipeline.*
+
+---
+
+{/* TODO: Add content */}
+
+Sentinel monitors Reddit for real-world threat signals across hundreds of subreddits: conflict, health crises, economic instability, political upheaval, natural disasters, and AI risk. 
+The pipeline runs in two stages: Stage 1 (triage) scans every batch of posts and flags potential threats. Stage 2 (verification) reviews the flagged content and confirms or rejects it.
+
+Stage 1 currently runs on GPT-5-mini. It processes every post across every monitored subreddit, making it the most expensive part of the pipeline by volume. Stage 2 runs on GPT-5 but only touches the flagged subset, so its costs scale with the flag rate rather than total coverage.
+
+The initial task we are trying to benchmark, is the stage 1 analysis. If an open weight model on a mid-tier gpu can get close to the quality ouput of GPT-5-mini, then the cost structure of the pipeline changes. 
+
+The benchmark infrastructure, dataset, and evaluation methodology are open-sourced at [threat-bench](https://github.com/jcl80/threat-bench).
+
+## The Benchmark
+
+Threat-Bench uses real production output as ground truth, not hand-labeled data (for the next update we will add). 
+
+We took 98 analyses from the last two weeks of Sentinel's live pipeline, covering 2,385 posts across 12 subreddits. Each analysis includes the exact batch of posts that was sent to GPT-5-mini, which posts it flagged, the evidence and reasoning it produced, and GPT-5's Stage 2 verification result.
+
+The subreddits are split into three tiers:
+| Tier | Subreddits | What it tests |
+|------|------------|---------------|
+| Threat-dense | collapse, ukraine, worldnews, geopolitics | Detection rate — can the model find real threats? |
+| Ambiguous | Economics, technology, news, energy | Precision — does it handle borderline content correctly? |
+| Benign | Cooking, askscience, woodworking, gardening | False positive rate — does it flag irrelevant content? |
+
+The key metric is recall at the analysis level: given a batch that the production pipeline confirmed as a real threat, did the model under test flag at least one of the same posts? We also compare field-level agreement — categories, geography, confidence, importance — for every detected threat.
+
+<GPUModelMatrix />
+
+GPT-5-mini is one of the best models out there, so it makes sense to start testing from larger cards down to smaller ones, stopping where results no longer justify the hardware. Along the way, we can learn what actually matters for this task — does raw parameter count win, or do MoE architectures with fewer active parameters handle triage just as well? Is a dense 32B model better than a sparse 120B model at structured threat classification?
+For this Part 0, we ran gpt-oss-120b on a single RTX Pro 6000 Blackwell (96GB, ~$1/hr on Vast.ai). Qwen3-32B on the same card and gpt-oss-20b on an RTX 5090 (~$0.37/hr) are queued for Part 1.
+
+....
+
+
+## Relevant Benchmarks
+
+Our task has specific requirements that not every benchmark captures. Stage 1 needs to: read messy Reddit text (posts, comments, slang, sarcasm), reason about whether something constitutes a real-world threat, classify it across multiple categories, extract structured fields (geography, confidence, importance), and output valid JSON.
+
+Not all public benchmarks are useful proxies for this. Here's what we looked at:
+
+| Benchmark | Why it matters for us | Why it doesn't |
+|-----------|----------------------|----------------|
+| MMLU-Pro | Tests broad knowledge — geopolitics, economics, health, science. A model that scores poorly here probably lacks the world knowledge to distinguish a real threat from noise. | Multiple choice, not generative. Doesn't test reasoning chains. |
+| IFEval | Tests instruction following — can the model stick to a schema, respect field constraints, output what you asked for? Directly relevant to structured JSON output. | Doesn't test domain knowledge. |
+
+The benchmarks that matter most for us are MMLU-Pro (does it know enough?) and IFEval (can it follow instructions precisely?). Coding and math benchmarks are irrelevant — our task is zero-code.
+
+A model that scores high on MMLU-Pro but low on IFEval might have the knowledge but produce broken JSON. A model that aces IFEval but scores low on MMLU-Pro might output perfect structure while missing the actual threat. We need both.
+
+| Benchmark | GPT-5-mini class | gpt-oss-120b | What it means |
+|-----------|-----------------|--------------|---------------|
+| MMLU-Pro | ~82% | 90.0% | gpt-oss has the knowledge — it actually outscores GPT-5-mini on reasoning |
+| IFEval | ~96 | ~79 | GPT-5-mini is significantly better at following structured output instructions |
+
+## A Note on Architecture
+
+The current benchmark tests batch-level analysis because that's how the production pipeline works today — we send 15-50 posts in a single prompt and ask the model to identify which ones contain threats. This format exists because of API cost optimization: fewer calls means lower bills.
+
+But this isn't a permanent constraint. With a local model, the economics change. We could restructure to per-post analysis, eliminating the post-index alignment problem entirely. We could fine-tune on our specific schema to close the IFEval gap. We could cache the system prompt so we're not re-sending context every time.
+
+The API's batch format is an artifact of cost structure, not a fundamental requirement of the task. threat-bench Part 0 tests the models as-is, with the production prompt, to establish a baseline. Future parts will explore whether architectural changes — per-post inference, fine-tuning, schema optimization — can close the remaining gaps.
+
+## Results: gpt-oss-120b on RTX Pro 6000 Blackwell
+
+We ran all 96 baseline analyses through gpt-oss-120b served via vLLM on a single RTX Pro 6000 Blackwell (96GB GDDR7, rented at ~$1/hr on Vast.ai). The model was loaded at its native MXFP4 precision — 65.97 GiB of weights, no quantization applied.
+
+### Detection
+
+| | Overall | Threat-dense | Ambiguous | Benign |
+|---|---------|-------------|-----------|--------|
+| Confirmed threats | 73 | 36 | 37 | 0 |
+| Detected | 56 | 29 | 27 | — |
+| Missed | 17 | 7 | 10 | — |
+| Recall | 76.7% | 80.6% | 73.0% | — |
+| Benign false positives | 0 | — | — | 0 |
+
+The model correctly ignored all 40 posts across the four benign subreddits : zero false flags on Cooking, askscience, woodworking, and gardening. It knows what a threat isn't.
+
+On the threat tiers, the gradient is expected: 80.6% recall on threat-dense subreddits drops to 73.0% on ambiguous subreddits. The ambiguous tier (Economics, technology, news, energy) is where the task is hardest and where the model loses the most ground.
+
+### The Misses
+
+17 confirmed threats were not detected. But looking at the per-analysis breakdown, a pattern emerges: most "misses" are not failures to see the threat — they're failures to flag the exact same post as GPT-5-mini.
+
+For example:
+
+- **Analysis 785454** (worldnews, 100 posts): model flagged 65 posts, missed the 1 baseline post
+- **Analysis 792174** (worldnews, 100 posts): model flagged 74 posts, missed the 1 baseline post
+- **Analysis 720968** (ukraine, 35 posts): model flagged 19 posts, missed the 1 baseline post
+
+In these cases, the model clearly identified the batch as threatening , it just attributed the signal to a different post. This is consistent with the IFEval gap: gpt-oss-120b has the knowledge but doesn't follow evidence-anchoring instructions as precisely as GPT-5-mini.
+
+If we only reviews the flagged posts, the wrong evidence anchor could cause a real threat to be rejected. This is an open question for Part 1.
+
+### Field Agreement
+
+For the 56 detected threats, how closely did gpt-oss-120b match GPT-5-mini's output?
+
+| Field | Metric | Score | Notes |
+|-------|--------|-------|-------|
+| Geography (country) | Exact match | 92.9% | Near-perfect |
+| Geography (region) | Exact match | 92.9% | Near-perfect |
+| Categories | Jaccard similarity | 0.765 | Gets primary category, tends to drop secondary |
+| Confidence | MAE | 0.048 | Essentially calibrated identically |
+| Weirdness | MAE | 0.625 | Decent |
+| Importance | MAE | 1.286 | Systematically rates ~1.3 points lower |
+
+The model nails geography and confidence. Categories show a consistent pattern: baseline says [conflict, political], model outputs [conflict]. It identifies the primary signal but drops secondary classifications. Importance is systematically underrated — the model considers threats less severe than GPT-5-mini does.
+
+### By Category
+
+| Category | Confirmed | Detected | Detection Rate |
+|----------|-----------|----------|----------------|
+| Natural disaster | 5 | 5 | 100% |
+| Conflict | 43 | 36 | 83.7% |
+| Economic | 37 | 30 | 81.1% |
+| AI risk | 5 | 4 | 80.0% |
+| Political | 38 | 30 | 78.9% |
+| Health | 6 | 4 | 66.7% |
+
+Natural disasters are detected perfectly. Health is weakest at 66.7%, though with only 6 samples this could be noise.
+
+### Throughput
+
+| Metric | Value |
+|--------|-------|
+| Total wall clock | 2.6 hours |
+| Total tokens | 1.7M |
+| Avg tokens per analysis | ~17,750 |
+| Avg completion tokens per analysis | ~6,668 |
+| Completion tokens/sec | 68.7 |
+| Vast.ai cost for full benchmark | ~$2.50 |
+
+## Economics
+
+*A caveat: the production system doesn't track prompt/completion tokens separately but it records total tokens and assumes a 50/50 split for cost calculation. The benchmarks we ran also have imprecise throughput numbers because we didn't saturate all 18 concurrent request slots. The numbers below are back-of-envelope estimates based on what we have. They're directionally right but shouldn't be taken as precise.*
+
+### Current Production Costs
+
+| Metric | Value |
+|--------|-------|
+| Stage 1 analyses per day | ~8,400 |
+| Stage 1 monthly cost (GPT-5-mini API) | ~$964 |
+| Stage 2 monthly cost (GPT-5 API) | ~$1,135 |
+| Combined monthly spend | ~$2,100 |
+| Cost per Stage 1 analysis | $0.0041 |
+
+### gpt-oss-120b As-Is (No Fine-Tuning)
+
+Running the production prompt as-is against gpt-oss-120b, the model is significantly more verbose than GPT-5-mini. gpt-oss-120b averaged ~6,668 completion tokens per analysis — as a reasoning model, it generates thinking tokens before producing the actual output. GPT-5-mini likely produces somewhere between 730-1,100 completion tokens for the same task. That's a 6-9× verbosity gap.
+
+At our measured throughput of 68.7 completion tokens/sec on a single card:
+
+| Metric | Value |
+|--------|-------|
+| Analyses per day (single card) | ~890 |
+| Production requirement | 8,400/day |
+| Coverage | ~10.6% |
+| Cards needed to match production | ~10 |
+| Monthly cost (10 rented cards) | ~$7,200 |
+
+That's 7.5× the current Stage 1 API cost. Without changes, swapping to local inference doesn't make economic sense.
+
+### gpt-oss-120b Fine-Tuned (Projected)
+
+Fine-tuning changes the equation from several angles:
+
+- **Strip thinking tokens:** teach the model to output JSON directly. Completion drops from ~6,668 to ~800-1,000 tokens.
+- **Bake in the system prompt:** the schema, categories, and instructions become part of the model's weights. Prompt tokens drop from ~11K to ~500-800.
+- **Per-post analysis:** instead of batching 15-50 posts, analyze one post at a time. Eliminates the post-index alignment problem that caused most of our recall misses.
+
+Projected throughput with a fine-tuned model doing per-post analysis:
+
+| Metric | Value |
+|--------|-------|
+| Analyses per day (single card) | ~5,900 |
+| Production requirement | 8,400/day |
+| Coverage | ~70% |
+| Cards needed to match production | ~1.5 |
+
+**Rental scenario (2 cards):** $1,440/month vs $964/month current. Doesn't break even — rental is ~50% more expensive than the API.
+
+**Purchase scenario (1 card):** An RTX Pro 6000 Blackwell costs roughly $7,000-8,000. If one card handles 70% of volume and the remaining 30% stays on the API, you're looking at:
+
+| | Monthly cost |
+|---|-------------|
+| Current (100% API) | $964 |
+| Hybrid (70% local + 30% API) | ~$289 API + electricity |
+| Monthly savings | ~$675 |
+| Payback period | ~11-12 months |
+
+The more interesting play is on Stage 2. If the fine-tuned local model is precise enough to reduce the flag rate () currently 14% of analyses escalate to GPT-5 ) that cuts into the $1,135/month Stage 2 spend, which is actually the larger cost center. But that's speculative until we have fine-tuning results.
+
+### What We Don't Know Yet
+
+These projections have real gaps:
+
+- **Fine-tuning overhead:** we haven't fine-tuned yet. The completion token reduction is an estimate based on stripping CoT and baking in the prompt.
+- **Throughput at full concurrency:** we ran at 8 workers, not 18. Saturating all slots could improve throughput by 50-100%.
+- **vLLM optimizations:** we ran with --enforce-eager (no CUDA graphs) because Blackwell requires it. Future vLLM versions may remove this constraint.
+- **gpt-oss-20b:** if a fine-tuned 20B model can match the 120B on this specific task, it runs on an RTX 5090 at $0.37/hr.
+- **Production token tracking:** the 50/50 prompt/completion split in the cost calculation is almost certainly wrong. Fixing this would give us more accurate baseline costs to compare against.
+
+## Other Models
+
+gpt-oss-120b is the knowledge ceiling on a single RTX Pro 6000, but it might not be the best practical choice for this task. The IFEval gap showed us that instruction following matters as much as raw knowledge, and other models trade some knowledge for significantly better compliance.
+
+| Model | Type | VRAM | MMLU-Pro | IFEval | Notes |
+|-------|------|------|----------|--------|-------|
+| gpt-oss-120b | MoE 117B (5.1B active) | ~65GB MXFP4 | 90.0% | ~79 | Most knowledge, worst compliance |
+| Qwen3.5-27B | Dense 27B | ~54GB BF16 | 86.1% | 95.0 | Near GPT-5-mini compliance, strong knowledge |
+| Qwen3-32B | Dense 32B | ~64GB BF16 | 68.7% | 87.8 | Good compliance, weaker knowledge |
+| Qwen3.5-9B | Dense 9B | ~18GB BF16 | 82.5% | TBD | Claims to beat gpt-oss-120b on some evals |
+| gpt-oss-20b | MoE 21B (3.6B active) | ~16GB MXFP4 | ~74% | TBD | Smallest footprint in the MoE family |
+| Gemma 3 27B | Dense 27B | ~54GB BF16 | 67.5% | ~67 | Outclassed — lowest on both metrics |
+| Kimi K2 | MoE 1T (32B active) | ~2TB | 81.1% | 89.8 | Strong benchmarks, **impossible to self-host** |
+| DeepSeek R1 | Dense 671B | ~1.3TB | 85.0% | TBD | Same problem as Kimi, **impossible to self-host** |
+
+The standout is **Qwen3.5-27B**. It scores 86.1% on MMLU-Pro — only 4 points below gpt-oss-120b — while hitting 95.0 on IFEval, which essentially matches GPT-5-mini's instruction-following capability. At 54GB BF16 it fits comfortably on the RTX Pro 6000 with more headroom for KV cache than gpt-oss-120b. If our main bottleneck is compliance rather than knowledge — and Part 0 strongly suggests it is — Qwen3.5-27B could outperform gpt-oss-120b on the actual task despite looking slightly worse on paper.
+
+**Qwen3.5-9B** is the wildcard. At only 9 billion parameters and ~18GB BF16, it runs on an RTX 5090 ($0.37/hr) or even an RTX 4090. It claims 82.5% on MMLU-Pro — beating gpt-oss-120b on some evaluations — which seems improbable for a model 13× smaller, but if it holds up on our task, it would completely change the hardware economics.
+
+**Gemma 3 27B** was impressive when it launched in March 2025, but Qwen3.5-27B (February 2026) demolished it at the same parameter count: 86.1 vs 67.5 on MMLU-Pro, 95.0 vs ~67 on IFEval. A year in LLM development is an eternity. We're deprioritizing it unless the other candidates fail.
+
+Models like **Kimi K2** and **DeepSeek R1** have strong benchmarks but are simply too large to self-host on purchasable hardware. Kimi K2 needs ~2TB of VRAM. DeepSeek R1 needs ~1.3TB. These require multi-node GPU clusters, the kind of infrastructure that defeats the purpose of moving off the API. If we're going to rent a cluster, we might as well keep paying OpenAI. The whole point is to run on hardware we can buy and own.
+
+gpt-oss-120b remains the strongest model that fits on a single purchasable card. No other model in the 80-200B range can run at original precision on one GPU (its MoE architecture with only 5.1B active parameters is uniquely efficient. The question Part 1 will answer is whether that raw knowledge advantage actually matters more than Qwen3.5-27B's superior instruction following for this specific task) I suspect GPTOSS will be better for our tasks, given that we probalby will just simplify and finetune gptoss to be as simple as possible, and make good use of ots knowledge
+
+### Hardware Recommendation
+
+For running gpt-oss-120b at original precision, the RTX Pro 6000 Blackwell is the clear first purchase. At 96GB GDDR7 it's the only single-GPU option that fits the model's 66GB weights with enough headroom for KV cache and concurrent requests.
+
+The A100 and H100 at 80GB are theoretically possible but practically constrained, after loading 66GB of weights, only ~14GB remains for KV cache, severely limiting concurrency and throughput. Their higher memory bandwidth doesn't compensate for the VRAM ceiling. A dual RTX 5090 setup (2×32GB = 64GB) can't fit the model at all, and multi-GPU inference adds communication overhead and deployment complexity that defeats the purpose of a simple local setup.
+
+The RTX Pro 6000 also fits every other model we'd want to test — Qwen3.5-27B at 54GB, Qwen3-32B at 64GB — all with more headroom than gpt-oss-120b. It's the single card that covers the entire competitive landscape at full precision.
+
+If Part 1 shows that gpt-oss-20b or Qwen3.5-9B can match the larger models after fine-tuning, the hardware story changes entirely. Both run on a single RTX 5090 (~$0.37/hr rental, ~$2,000 purchase). That's consumer-grade hardware running production threat detection.
+
+## Conclusions
+
+gpt-oss-120b can detect threats. It scored 90% on MMLU-Pro — outperforming GPT-5-mini on raw reasoning — correctly ignored all benign content, and matched GPT-5-mini's geography and confidence calibration almost exactly. The knowledge to do this job is there.
+
+But it can't follow instructions as precisely as GPT-5-mini. The IFEval gap (~79 vs ~96) shows up everywhere in our results: missed evidence anchoring causing 17 recall "misses" that are really formatting failures, secondary categories dropped from outputs, and a 6-9× verbosity gap from unnecessary chain-of-thought reasoning. 
+
+That distinction matters because compliance can be attacked from two directions:
+
+**Architecture change.** The batch format — sending 15-50 posts in one prompt and asking "which ones are threats?" — is the root cause of the post-index alignment problem. With local inference, we're no longer optimizing for fewer API calls. Switching to per-post analysis eliminates the evidence-anchoring issue entirely. The model just needs to answer "is this post a threat?" — a simpler instruction-following task that plays to its strengths. This alone could recover most of the 17 misses without touching the model at all.
+
+**Fine-tuning.** A few hundred examples of the correct output format would close the IFEval gap, strip the unnecessary chain-of-thought tokens, and bake the schema into the model's weights. This attacks the verbosity problem and the category-dropping pattern.
+
+These two changes are complementary and independent, either one improves the results, both together could close the gap to GPT-5-mini entirely.
+
+Economically, a straight swap doesn't work today. The verbosity alone makes local inference more expensive than the API. But with per-post analysis reducing prompt tokens, fine-tuning reducing completion tokens, and purchased hardware eliminating rental costs, the projected payback is under 12 months with significant long-term savings.
+
+The most important takeaway from Part 0 is that we're not blocked by model capability. We're blocked by model compliance and prompt architecture. Both are solvable problems.
+
+## What's Next
+
+**Part 1 — More models, same methodology.** 
+
+**Part 2 — Fix the measurement.** The current eval has known blind spots. The production system needs to track prompt and completion tokens separately instead of assuming a 50/50 split. We need to capture raw Stage 1 flags before Stage 2 filtering to get an apples-to-apples flag rate comparison.
+
+**Part 3 — Fine-tuning.** This is where the economics could flip. A fine-tuned model that outputs clean JSON without thinking tokens, handles per-post analysis, and has the schema baked into its weights would be a fundamentally different model from what we tested here.
+
+**Part 4 — Production trial.** If fine-tuning produces a model that hits ~90%+ recall with a reasonable flag rate, we run it in shadow mode alongside GPT-5-mini for a week. Same inputs, both outputs, compare live. That's the real test.
+
+
+## Practical Recommendations
+
+Concrete takeaways.
+
+### What do we need to run a "smart" model locally?
+
+The landscape of models that can actually be self-hosted on purchasable hardware is smaller than it looks. Models like Kimi K2 (1T params, ~2TB VRAM), DeepSeek R1 (671B, ~1.3TB), and Qwen3-235B need multi-node GPU clusters that cost as much as years of API access. They're impressive but irrelevant for self-hosting.
+
+The realistic options that run at full precision on a single card are:
+
+| Model | Why it's interesting | Minimum card |
+|-------|---------------------|-------------|
+| gpt-oss-120b | Highest MMLU-Pro (90.0%) of any self-hostable model. MoE architecture means only 5.1B active params despite 117B total. | RTX Pro 6000 (96GB) |
+| Qwen3.5-27B | Best balance of knowledge (86.1%) and compliance (IFEval 95.0). Could solve our problem without fine-tuning. | RTX Pro 6000, A100, or H100 (54GB) |
+| Qwen3.5-9B | If benchmarks hold up on our task, this runs on consumer hardware. | RTX 5090 or RTX 4090 |
+| gpt-oss-20b | OpenAI's small MoE. Unknown quality on our task but fits anywhere. | RTX 5090 or RTX 4090 |
+
+gpt-oss-120b is the strongest model that fits on a single purchasable GPU. Nothing else in the 80-200B range comes close to its reasoning benchmarks while remaining self-hostable. But Qwen3.5-27B might be the smarter pick for our specific task because it trades 4 points of knowledge for 16 points of instruction following.
+
+### How much compute does Sentinel need?
+
+Production runs ~8,400 Stage 1 analyses per day. With the current batch format and gpt-oss-120b's verbosity (~6,668 completion tokens per analysis), a single RTX Pro 6000 handles about 890 analyses/day — roughly 10% of production volume.
+
+With fine-tuning (stripping thinking tokens, per-post analysis, baked prompt), projected throughput rises to ~5,900 analyses/day per card — about 70% of production. Two cards or one card plus API overflow would cover the full pipeline.
+
+### What's the first hardware purchase?
+
+One RTX Pro 6000 Blackwell (~$7,000-8,000). It's the only card that:
+
+- Fits gpt-oss-120b at original precision (66GB weights + 16GB KV cache + headroom)
+- Fits every other candidate model (Qwen3.5-27B, Qwen3-32B, Qwen3.5-9B)
+- Has enough VRAM headroom for concurrent requests (18 slots)
+- Is a single card — no multi-GPU complexity, no tensor parallelism, no NCCL overhead
+
+The A100 and H100 at 80GB are too tight for gpt-oss-120b. Dual RTX 5090 (64GB total) can't fit it at all. The RTX Pro 6000 is the one card that covers the entire model landscape we'd want to test and deploy.
+
+If Part 1 proves that a smaller model (gpt-oss-20b or Qwen3.5-9B) can match gpt-oss-120b after fine-tuning on our specific task,  then an rtx 5090 could also solve the task. At this price point though, the winner is rtx 6000 blackwell (provided we find it at 8k range)

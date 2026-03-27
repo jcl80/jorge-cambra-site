@@ -1,8 +1,10 @@
 import type { MDXComponents } from 'mdx/types'
+import GPUModelMatrix from '@/components/gpu-model-matrix'
 
 export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
     ...components,
+    GPUModelMatrix,
     Cover: ({
       src,
       alt,
