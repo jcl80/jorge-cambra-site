@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 1',
+    description: 'Isolating model intelligence: how good are open-weight models at understanding threats?',
+    link: '/blog/offloading-sentinel-local-inference-part-1',
+    uid: 'blog-sentinel-local-inference-1',
+  },
+  {
     title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 0',
     description: 'Preliminary benchmarks of open-weight models for replacing GPT models in Sentinel\'s threat detection pipeline.',
     link: '/blog/offloading-sentinel-local-inference-part-0',
@@ -142,7 +148,7 @@ export const BLOG_POSTS: BlogPost[] = [
   },
   {
     title: 'Potential Projects',
-    description: '',
+    description: 'A strategic evaluation of where Sentinel\'s time and resources are best spent',
     link: '/blog/potential-projects',
     uid: 'blog-potential-projects',
   },
@@ -170,12 +176,12 @@ export const BLOG_POSTS: BlogPost[] = [
     link: '/blog/houston-rockets-27-miss-three-point-streak',
     uid: 'blog-rockets-streak',
   },
-  {
-    title: 'Why La Masia Favors Shorter Players',
-    description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
-    link: '/blog/why-la-masia-favors-shorter-players',
-    uid: 'blog-la-masia',
-  },
+  // {
+  //   title: 'Why La Masia Favors Shorter Players',
+  //   description: 'A deep dive into how FC Barcelona\'s academy has revolutionized youth development by prioritizing technical ability over physical attributes',
+  //   link: '/blog/why-la-masia-favors-shorter-players',
+  //   uid: 'blog-la-masia',
+  // },
 ]
 
 export const SOCIAL_LINKS: SocialLink[] = [

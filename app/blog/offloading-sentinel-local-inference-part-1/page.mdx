@@ -1,0 +1,230 @@
+<Cover
+  src="/images/sherlock.webp"
+  alt="Sherlock Holmes"
+  caption="Photo found at https://www.panmacmillan.com/"
+/>
+
+
+# Offloading Sentinel's Analysis Pipeline to Local Inference - Part 1
+
+*Isolating model intelligence: how good are open-weight models at understanding threats?*
+
+---
+
+Part 0 showed that gpt-oss-120b has the knowledge to detect threats but can't follow instructions precisely enough to replace GPT-5-mini in the production pipeline. The IFEval gap explained some of the misses: wrong evidence anchoring, dropped categories, etc.
+
+But, instruction following is an engineering problem. You can fine-tune it out, simplify the output schema, restructure the prompt. The harder question is whether the model actually understands what constitutes an existential threat. Part 1 focuses on that.
+
+# Idea
+
+We previously tested everything at once: knowledge, instruction following, schema compliance, evidence anchoring. We sent all the posts tangled together in a batch analysis format. gpt-oss-120b had the knowledge to detect threats but couldn't follow instructions precisely enough.
+
+Part 1 was supposed to untangle that. Strip away the structured output, the JSON schema, the batch format. One article, one question: is this existentially important? Yes or no. Simplifying this, it's no longer an instruction-following problem , and we can focus on what we really need: intelligence, taste, knowledge.
+
+# Pipeline
+
+Eye of Sauron ingests thousands of news articles daily from Google Alerts, GDELT, Hacker News, AI lab blogs, and other sources. Each article goes through a model, which evaluates whether the article describes something of existential importance: events or precursors of these that could threaten humanity at scale. The criteria are specific: more than 100 deaths, novel pathogens, conflict between nuclear powers, terrorist groups with new capabilities, events that could escalate globally.
+Then a human reviews what the model flagged and makes the final call.
+
+# Dataset
+
+My idea was to take a significant chunk of this human reviewed data and use it as a benchmark. 
+
+The models we want to test would get the same information the human got, and we'd compare their answers against the human's judgment.
+I extracted the two most recent fully reviewed months - January and February 2026. 8,042 articles.
+
+ 264 marked "yes" by the human reviewer. 7,778 marked "no." A ratio of roughly 1:29, which is the natural production distribution.
+I chose recency on purpose. 
+
+These articles are almost certainly past the training cutoff for every model we'd test. 
+
+A few details about the data:
+
+- About 10% of articles (837) had empty summaries , forcing the model to classify from the title alone
+- 50 duplicate titles, mostly radio news bulletins with generic names ("ABC National News") that were actually different articles
+- I excluded 179 articles from a Chinese military news source (gmw.cn) because those were processed with a different prompt and different criteria in production
+
+The benchmark infrastructure, dataset, and code are at [threat-bench](https://github.com/jcl80/threat-bench).
+
+#  Prompts
+
+We tested four prompt variants, referred to as **Prompt A**, **Prompt B**, **Prompt C**, and **Prompt A v2** throughout the results.
+
+### Prompt A : Full Prompt
+
+The complete prompt with criteria, examples, and edge-case guidance:
+
+```text
+You are classifying whether a news article describes an event of existential or global importance.
+
+An article is existentially important if:
+
+- It involves more than a hundred deaths.
+- It involves many cases of a sickness that might spread, or a new pathogen.
+- It involves conflict between nuclear powers.
+- It involves conflict that could escalate into global conflict, even if it hasn't already.
+- It involves terrorist groups displaying new capabilities.
+- ... and in general, if it involves events that could threaten humanity as a whole.
+
+Many articles describe events that are important or noteworthy but not existentially important. Only answer yes for events that meet the existential threshold.
+
+Examples:
+
+- Houthis cut undersea internet cables: Meets existential importance threshold, because it is a terrorist group displaying new capabilities.
+- Macron suggests sending NATO troops to Ukraine: Is of existential importance, as a NATO v. Russia conflict could spiral into a global war.
+- New, more deadly and infectious strain of covid detected in Lausanne: Is of existential importance, as a deadly pandemic is one of the ways a large swathe of humanity could die at once.
+- OpenAI releases new capable model: Is of existential importance, as that model could be used by bad actors to cause mayhem, or it itself could threaten humanity.
+- US company lands probe in the Moon: Is of high importance but it is not of existential importance, as it doesn't threaten humanity.
+- Start of a war (e.g., the start of the war in Ukraine): Almost always of existential importance, as rocking the international status quo could spiral out.
+- Later developments of a war (e.g., current war in Gaza, or current war in Ukraine): Probably not of existential importance, as the likelihood of spiraling out declines as the rules of engagement become clearer. Probably still of high importance (just not existentially so).
+- Opinion and discussion pieces are not existentially important. A sign something is an opinion piece is a somewhat generic title, like "Why Nuclear Risks Have Not Gone Away", or "At the Brink: Confronting the Risk of Nuclear War". Review articles and lists of events are likewise not existentially important unless they bring up novel events.
+- In a broader conflict, small-fry developments are not existentially important. For example, small developments in the Ukraine or Gaza wars are not existentially important unless the new events themselves involve more than 1k deaths, even if the conflict as a whole involves more than that number of deaths. On the other hand, developments involving escalations or nuclear weapons are not "small fry".
+- We are in 2026. Reviews of past conflicts, like 9/11, or a tornado in 2023, no longer count as existentially important, even if they were so at the time.
+
+---
+
+Article title: {title}
+
+Article summary: {summary}
+
+Is this article existentially important? Answer only "yes" or "no".
+```
+
+### Prompt B : Minimal Prompt
+
+Stripped down to just the question — no criteria, no examples:
+
+```text
+Article title: {title}
+
+Article summary: {summary}
+
+Is this article describing an event of existential or global importance? Answer yes or no.
+```
+
+### Prompt C : Re-evaluation Prompt
+
+The full prompt plus reasoning from a previous AI pass:
+
+```text
+You are classifying whether a news article describes an event of existential or global importance.
+
+An article is existentially important if:
+
+- It involves more than a hundred deaths.
+- It involves many cases of a sickness that might spread, or a new pathogen.
+- It involves conflict between nuclear powers.
+- It involves conflict that could escalate into global conflict, even if it hasn't already.
+- It involves terrorist groups displaying new capabilities.
+- ... and in general, if it involves events that could threaten humanity as a whole.
+
+Examples:
+
+- Houthis cut undersea internet cables: Yes, because it is a terrorist group displaying new capabilities.
+- Macron suggests sending NATO troops to Ukraine: Yes, as a NATO v. Russia conflict could spiral into a global war.
+- New, more deadly and infectious strain of covid detected in Lausanne: Yes, as a deadly pandemic is one of the ways a large swathe of humanity could die at once.
+- OpenAI releases new capable model: Yes, as that model could be used by bad actors to cause mayhem, or it itself could threaten humanity.
+- US company lands probe in the Moon: No, as it doesn't threaten humanity.
+- Start of a war (e.g., the start of the war in Ukraine): Almost always yes, as rocking the international status quo could spiral out.
+- Later developments of a war (e.g., current war in Gaza, or current war in Ukraine): Probably no, as the likelihood of spiraling out declines as the rules of engagement become clearer.
+- Opinion and discussion pieces are not existentially important. A sign something is an opinion piece is a somewhat generic title, like "Why Nuclear Risks Have Not Gone Away", or "At the Brink: Confronting the Risk of Nuclear War". Review articles and lists of events are likewise not existentially important unless they bring up novel events.
+- In a broader conflict, small-fry developments are not existentially important. For example, small developments in the Ukraine or Gaza wars are not existentially important unless the new events themselves involve more than 1k deaths, even if the conflict as a whole involves more than that number of deaths. On the other hand, developments involving escalations or nuclear weapons are not "small fry".
+- We are in 2026. Reviews of past conflicts, like 9/11, or a tornado in 2023, no longer count as existentially important, even if they were so at the time.
+
+---
+
+Article title: {title}
+
+Article summary: {summary}
+
+A previous AI's reasoning about this article: {importance_reasoning}
+
+Is this article existentially important? Answer only "yes" or "no".
+```
+
+### Prompt A v2
+
+Added the "high importance does not equal existential importance" distinction from the production prompt. The original Prompt A explicitly distinguishes these ("US company lands probe on the Moon: is of high importance but it is not of existential importance"). I thought stripping this distinction in the shorter prompts was causing models to flag everything vaguely important as existential. Prompt A v2 is Prompt A with this paragraph reintroduced:
+
+```text
+Many articles describe events that are important or noteworthy but not existentially
+important. Only answer yes for events that meet the existential threshold.
+```
+
+# Results: GPT-5 on the simplified bench
+
+I ran GPT-5 on the simplified bench (50 yes, 400 no) across all four prompt variants.
+
+| Prompt | Yes Recall | No Specificity | Precision | F1 | Overall Accuracy |
+|--------|-----------|----------------|-----------|-----|-----------------|
+| A (production criteria) | 54.0% (27/50) | 44.0% (176/400) | 10.8% | 17.9% | 45.1% |
+| B (bare) | 20.0% (10/50) | 80.0% (320/400) | 11.1% | 14.3% | 73.3% |
+| C (with AI reasoning) | 56.0% (28/50) | 33.5% (134/400) | 9.5% | 16.3% | 36.0% |
+| A v2 (high-importance distinction) | 42.0% (21/50) | 46.8% (187/400) | 9.0% | 14.8% | 46.2% |
+
+Every variant failed.
+
+**Prompt A** catches about half the threats but flags 56% of non-threats too.
+
+**Prompt B** looks accurate at 73.3% but that's because it says "no" to almost everything. It only catches 20% of actual threats. A model that says "no" to everything would score 88.9% accuracy on this dataset. Prompt B is barely better than that.
+
+**Prompt C** has the best recall at 56% but the worst specificity at 33.5%. The production AI's reasoning always argues for importance (that's its job), so feeding it to GPT-5 just anchors the model toward "yes."
+
+**Prompt A v2** — the "fix" — made things worse. Recall dropped from 54% to 42%, specificity barely improved, and precision actually went down.
+
+All four variants land around 10% precision. Nine out of ten articles the model flags as existentially important are articles the human said "no" to.
+
+# What went wrong
+
+I stopped iterating on prompts and started investigating the data.
+
+The first thing I should have done from the beginning: I asked the tool's user how he actually uses it [[1]](#ref-1).
+
+The Eye of Sauron TUI shows articles in clusters of 10 or more related articles from the same news cycle. The human reviewer sees the cluster, reads through them, and marks the cluster as relevant or not. Individual articles get their labels from the cluster decision, not from individual evaluation.
+
+This is a critical detail I missed. The human wasn't looking at each article and asking "is this existentially important?" He was looking at a cluster of news about, say, the Iran situation, and deciding whether that cluster as a whole was worth saving. An individual article within a "yes" cluster might be a minor update, an opinion piece, or a tangential story that happened to be grouped with the important ones. But it gets labeled "yes" because the cluster was relevant.
+
+So we were trying to get a model evaluating articles one at a time to match a human who was evaluating them in groups. The model sees "Airport Chaos Could Continue Into Summer" and says "no, that's not existential." The human said "yes" because it was clustered with articles about a conflict disrupting air travel. Both are arguably correct, but they're answering different questions.
+
+
+The production AI's importance reasoning made things worse. Since its reasoning always argues for importance. When we fed that reasoning to GPT-5 (Prompt C), the model got anchored by the AI's confident-sounding argument and became even more trigger happy. The human can override a bad AI argument. GPT-5, apparently, is not that good at that.
+
+There's also the information gap. The human reviewer has the article URL and can click through to read the full text. We were only giving the model the title and summary. For articles with empty summaries (10% of the dataset), the model was classifying from the title alone. The human never had to do that.
+
+# Following our efforts
+
+
+Even accounting for the clustering issue, there's a clear chance that with more prompt tweaking and database digging we could have recreated the original environment the human was working in. Maybe feed articles in clusters. Maybe give the model the full article text. Maybe adjust the evaluation to be cluster level instead of article level.
+
+But that felt like the wrong direction. We'd be engineering around a flawed annotation process instead of fixing it. The production labels were measuring a different task than what we needed. The human was answering "is this cluster of news worth saving?" We need to know "is this individual article existentially important?"
+
+# What we decided
+
+So we designed a new benchmark from scratch. The idea:
+
+- **Fresh, unreviewed articles** that the annotator has never seen before , so no hindsight bias, no prior labels
+- **Defined criteria given to the annotator before they start** - same existential importance criteria from the production prompt
+- **Individual article evaluation**, no clusters.
+- **Matched inputs**. Whatever the annotator sees, the model sees the same thing
+- The same human who runs the production review annotates the benchmark, but this time with controlled methodology
+
+This became [ei-bench](https://github.com/jcl80/ei-bench), a standalone benchmark for existential importance classification. It includes a terminal-based annotation tool that tracks every interaction — what information the annotator looked at, whether they read the full article or decided from the summary, how long they spent.
+
+Part 2 will fully focus on this benchmark
+
+# What we learned
+
+The more general lesson: **production data is not automatically good benchmark data**. The process that generated the labels matters as much as the labels themselves. 
+
+# What's next 
+
+ **Ei-bench** (offloading-sentinel-local-inference-part-2)
+
+Fresh annotations, defined criteria, matched inputs. GPT-5, GPT-5-mini, and all seven open-weight models from Part 0, evaluated against clean human labels.
+
+---
+
+### References
+
+<span id="ref-1">[1]</span> I did review the Eye of Sauron codebase before building the benchmark, but compiled from a version that predated the clustering feature. The annotation workflow had changed since that version.
+
