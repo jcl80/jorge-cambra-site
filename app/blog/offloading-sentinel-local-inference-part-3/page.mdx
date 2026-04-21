@@ -1,0 +1,174 @@
+<Cover
+  src="/images/corny_nli_image.png"
+  alt="NLI"
+  caption="Photo found at https://www.datascience-in-tourism.com/?p=171"
+/>
+
+
+# Offloading Sentinel's Analysis Pipeline to Local Inference - Part 3
+
+*threat-bench, take two: fine-tuning failures, a bag-of-words model, and an ensemble gain that didn't survive holdout.*
+
+---
+
+After Part 2, we pivoted off ei-bench and back to threat-bench. Ground truth we could reproduce: 2,385 Reddit posts from the production pipeline, labels = GPT-5's own stage-1 decisions, matched inputs. 
+
+# The baseline 
+
+Before fine-tuning, I wanted a non-LLM zero-shot baseline. Something cheap to run, small enough to run on consumer hardware. Standard move: a pre-trained NLI (natural language inference) model used as a zero-shot classifier.
+
+The way this works: you pick a model trained to predict whether a hypothesis follows from a premise. For classification, you write a hypothesis like "This text describes a real-world threat" and ask the model for the entailment probability. No training. One forward pass.
+
+We used `MoritzLaurer/deberta-v3-large-zeroshot-v2.0` — DeBERTa-v3-large that has been further tuned on a large NLI/classification dataset. 435M parameters, fits on any mid-tier GPU, free to run.
+
+First pass against `label_gpt5` on the 2,385 posts:
+
+| thr | P | R | F1 |
+|-----|-----|-----|-----|
+| 0.17 | 0.799 | 0.863 | 0.830 |
+
+F1 = 0.83 against GPT-5's own labels. 435M model, no fine-tuning. Wasn't expecting that.
+
+The plan had been "fine-tune or distill something to beat a weak baseline." The baseline wasn't weak. The rest of Part 3 is about trying to beat it, which turned out to be much harder than expected.
+
+# Trying to fine-tune DeBERTa-v3-large
+
+Same backbone, now with supervised training on the labeled data. 1907 train, 478 test, stratified split on `label_gpt5`.
+
+The standard move at 1,900 examples is to skip full fine-tuning entirely and go straight to a frozen-backbone linear probe — fewer trainable parameters, less fragile, more appropriate for the data scale. I went in the wrong order: tried full fine-tune first, hit two documented failure modes, then retreated to the probe and found it was enough on its own.
+
+Full fine-tune collapsed twice.
+
+**Collapse 1 — NaN at step 4.** Loss ramping normally, then gradient norm spikes to 27, then NaN. First instinct: learning rate too high. Lowered it. Same thing. Eventually: Adam's epsilon default (`1e-8`) is a known footgun with DeBERTa-v3-large — the denominator in the Adam update goes too small in the first few steps, updates get too large, one bad batch destroys the model. Fix: `adam_eps=1e-6`. The NaN went away.
+
+**Collapse 2 — plateau at log(2).** With stability fixed, new problem. Loss drops for a few steps, then settles at ~0.69 — which is exactly log(2), the loss you get when the model outputs 50/50 for every example. Gradient norms drop from 9 to 1 over the first epoch and stay there. Classic saddle: in a balanced minibatch, "predict more positive" and "predict more negative" gradients cancel, and the model finds the flat floor of "output uniform, be wrong half the time."
+
+Both are probably solvable with enough patience — higher LR to kick out of the saddle, different warmup schedule, partial unfreezing. I pivoted instead. Five hours into an 8-hour day on a 1,907-example dataset, full fine-tuning of a 435M model was the wrong tool. Too fragile, too much hyperparameter surface area, too little data.
+
+Pivot: freeze the backbone, train only a classification head. A "linear probe." Much smaller parameter count, much smaller attack surface for things to go wrong, and at this data scale probably the right default anyway.
+
+# Frozen-backbone probe: a three-mode ablation
+
+Three variants, same split, same hyperparameters:
+
+- **Mode A:** MoritzLaurer NLI backbone + hypothesis format. The model sees `[post] [SEP] "This text describes a real-world threat..."` — the same format its pretraining expects.
+- **Mode B:** MoritzLaurer NLI backbone + bare post. No hypothesis.
+- **Mode C:** Raw `microsoft/deberta-v3-large` + bare post. No NLI pretraining, no hypothesis.
+
+Results on the 478-post test:
+
+| Mode | Backbone | Format | Test F1 |
+|------|----------|--------|---------|
+| A | MoritzLaurer NLI | (post, hypothesis) | 0.825 |
+| B | MoritzLaurer NLI | post alone | 0.699 |
+| C | microsoft deberta | post alone | 0.719 |
+
+Three things worth flagging.
+
+**Mode A ties zero-shot.** A trained linear probe on top of the NLI backbone gets F1=0.825 — statistically indistinguishable from zero-shot's 0.830. Fine-tuning didn't add value. At this data scale, whatever the probe can learn linearly from the finetune, zero-shot already extracts.
+
+**Mode B collapses.** Same backbone as A, no hypothesis. Drops to F1=0.70 with R=0.92 — the model predicts "threat" for almost everything and settles at the class prior. NLI-adapted backbones produce relational features at `[CLS]` — "does this hypothesis follow from this premise?" Remove the hypothesis and you remove the axis the backbone was built to discriminate along. The `[CLS]` embedding becomes a generic sentence representation the probe can't linearly separate.
+
+**Mode C is within noise of Mode B.** Raw DeBERTa, no hypothesis, same collapse. But the ablation is incomplete. The missing fourth cell is raw DeBERTa + hypothesis format. I didn't run it. Without that, I can say the hypothesis is load-bearing, but I can't cleanly attribute how much of Mode A's result comes from NLI pretraining vs format alone.
+
+Small correctness note: Mode C initially returned F1=0.71 because `microsoft/deberta-v3-large` ships without a classification pooler. HuggingFace random-initialized one, my `--freeze-backbone` flag then froze the random pooler along with the backbone, and the probe was training on random features. Caught via the load-report output. Fixed to auto-unfreeze newly-initialized tensors. Conclusion unchanged.
+
+So: fine-tuning is either too fragile (full tune) or saturates at zero-shot (linear probe). At 1,907 examples, this backbone isn't going further.
+
+# TF-IDF
+
+I added a bag-of-words baseline mostly to have something to compare against.
+
+`TfidfVectorizer(ngram=(1,2), min_df=2)` + `LogisticRegression(class_weight='balanced')`. Takes ~10 seconds to train on CPU.
+
+
+Test F1 at its best threshold: 0.833. Same as zero-shot. Same as the probe.
+
+Not surprising in hindsight. Reddit threat posts have a lot of lexical signal. "Missile," "strike," "casualties," "outbreak". A bag-of-words model picks these up without needing any semantic understanding.
+
+More interesting and intuitive: the two models might be making different mistakes. If zero-shot gets something wrong because the entailment probability is marginal, TF-IDF might still get it right because a key threat word is present. And vice versa. If their errors are disjoint, you can ensemble them and beat either one.
+
+# Error overlap
+
+Ran both models on the 478 test set. 2×2 confusion:
+
+|  | tfidf correct | tfidf wrong |
+|--|---------------|-------------|
+| **zs correct** | 328 | 57 |
+| **zs wrong** | 53 | 40 |
+
+53 of zero-shot's 93 errors — 57% — are ones TF-IDF gets right. Cohen's kappa on predictions is 0.54 (moderate agreement; the two models are making genuinely different decisions, not correlated ones).
+
+Broken down by error type:
+
+- Of 57 zero-shot false positives, TF-IDF correctly rejects 33 (58%).
+- Of 36 zero-shot false negatives, TF-IDF correctly catches 20 (56%).
+
+Both error types are partially recoverable. Ensemble is worth building.
+
+# Proper stacking
+
+A note on methodology: the first ensemble I built was 2-fold on the 478 test set. Too little data. Proper version:
+
+- 5-fold stratified split on the 1,907 training posts.
+- For each fold: fit TF-IDF + LR on 4 folds, predict on the held-out fold. Every training post now has an out-of-fold TF-IDF probability that didn't see it during fit.
+- Zero-shot probabilities on all posts (no training, no leakage).
+- Meta-LR trained on 1,907 rows of `[zs_prob, tfidf_oof_prob] → label`.
+- Final TF-IDF+LR fit on all 1,907 training posts → probabilities for the 478 test posts.
+- Single eval on the 478 test set, no averaging.
+
+Meta-LR weights came out `zs=+2.52, tfidf=+5.53, bias=-3.79`. Both positive, the ensemble uses both signals. TF-IDF weighted higher because its probabilities are better-calibrated; zero-shot's live on a compressed range (its best threshold was 0.17, not 0.5).
+
+Result on the 478 test:
+
+| Model | thr | P | R | F1 |
+|-------|-----|-----|-----|-----|
+| TF-IDF + LR | 0.44 | 0.796 | 0.875 | 0.833 |
+| Zero-shot NLI | 0.17 | 0.798 | 0.871 | 0.833 |
+| Stacked ensemble | 0.30 | 0.789 | 0.939 | 0.868 |
+
++0.035 F1 over either individual model. Recall from 0.87 to 0.94 at similar precision.
+
+One useful sanity check. If I skip the meta-LR entirely and just do `(zs_prob + tfidf_prob) / 2`, F1 = 0.856. Most of the gain (+0.023) comes from averaging. The meta-LR's calibration adds +0.012 on top. If simplicity matters, simple averaging captures most of the win.
+
+# Holdout: the gain shrinks
+
+Training-test F1 on a single 80/20 split is a weak number. Next step: pull fresh posts from the production DB — same 8 subreddits, all `analyzed_at >= 2026-04-05` (strictly after the training data), generate fresh `label_gpt5` via the production pipeline, score all three models. 1,686 posts.
+
+Two things changed.
+
+First, distribution shift. GPT-5 positive rate was 55% in training, 63% in the holdout. Threat density drifted up in about a month.
+
+Second:
+
+| Model | Training test F1 | Holdout F1 | ΔF1 |
+|-------|------------------|------------|-----|
+| Zero-shot (thr 0.17) | 0.833 | 0.814 | −0.019 |
+| TF-IDF + LR (thr 0.44) | 0.833 | 0.829 | −0.004 |
+| Stacked ensemble (thr 0.30) | 0.868 | 0.844 | −0.024 |
+
+Ensemble still wins, but the gain over TF-IDF alone shrank from +0.034 on training-test to +0.015 on holdout. More than half the apparent advantage was specific to the test split.
+
+Thresholds held up -- each model's best-threshold on the holdout was within 0.05 of where it was shipped. The ensemble's advantage over TF-IDF alone was cut in half between training-test and holdout — not eliminated, but smaller than the 478-post number suggested.
+
+# OOD: the ranking reverses
+
+One more validation. Pulled a fresh holdout from four different subreddits, chosen to vary in distance from training: politics (adjacent to worldnews), ClaudeAI (adjacent to technology), depression (far — mental health), personalfinance (far — consumer finance, unlike training's macroeconomics). 1,020 posts total. Positive rate: 11.8%, a third of the in-distribution rate.
+
+| Model | Training test F1 | OOD F1 | ΔF1 |
+|-------|------------------|--------|-----|
+| Zero-shot (thr 0.17) | 0.833 | 0.552 | −0.281 |
+| TF-IDF + LR (thr 0.44) | 0.833 | 0.452 | −0.381 |
+| Stacked ensemble (thr 0.30) | 0.868 | 0.530 | −0.338 |
+
+Zero-shot has the smallest F1 drop and the highest OOD F1 of the three. TF-IDF collapses hardest — lexical features don't transfer to unfamiliar vocabulary. The ensemble sits between them, dragged down by TF-IDF's failure. Whether it's statistically worse than zero-shot at this sample size is less clear; what's clear is that the in-distribution ensemble advantage is gone.
+
+The intuition is straightforward. Lexical features are vocabulary-dependent. Move to a subreddit where the threat vocabulary is different (mental health, personal finance) and TF-IDF's learned word weights stop making sense. Zero-shot's entailment judgment is more abstract; it transfers better. The ensemble, by weighting TF-IDF heavily, drags zero-shot down in the exact settings where TF-IDF's specialization hurts.
+
+The in-distribution ensemble win and the OOD ensemble loss have the same root cause. TF-IDF overfits to vocabulary that's stable in-distribution and unstable out-of-distribution. Ensembling with it amplifies whichever effect dominates.
+
+Part of the absolute F1 drop is arithmetic: lower positive rate mechanically lowers F1 for a given decision quality. But the ranking reversal is a real finding. On these four subreddits, the ensemble is actively worse than zero-shot alone.
+
+# What's next
+
+Conclusions

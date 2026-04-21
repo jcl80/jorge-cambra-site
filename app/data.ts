@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 3',
+    description: 'threat-bench, take two: fine-tuning failures, a bag-of-words model that wasn\'t supposed to work, and an ensemble gain that mostly didn\'t survive holdout.',
+    link: '/blog/offloading-sentinel-local-inference-part-3',
+    uid: 'blog-sentinel-local-inference-3',
+  },
+  {
     title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 2',
     description: 'Ei-bench: benchmarking GPT-5, GPT-5-mini, and open-weight models against clean human labels on existential importance classification.',
     link: '/blog/offloading-sentinel-local-inference-part-2',
