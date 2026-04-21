@@ -1,0 +1,174 @@
+<Cover
+  src="/images/Fine Tuning GenAI Model.webp"
+  alt="Sherlock Holmes"
+  caption="Photo found at https://www.iopex.com/"
+/>
+
+
+# Offloading Sentinel's Analysis Pipeline to Local Inference - Part 2
+
+*ei-bench: fresh labels, clean methodology, and why F1=0.50 is the ceiling of the task we can measure.*
+
+---
+
+Part 1 ended with a decision: rebuild the benchmark from scratch. Production labels from Eye of Sauron were measuring a different task than what we needed — the human was evaluating clusters of news, we needed per-article judgment. Even GPT-5 scored ~10% precision against those labels. Not a model problem. A ground truth problem.
+
+ei-bench is the rebuild.
+
+# Design
+
+Four rules that fell out of what went wrong in Part 1:
+
+- **Fresh articles.** Nothing the annotator had seen before. No hindsight, no prior labels, no cluster memory.
+- **Defined criteria** written down before annotation starts. Same existential importance criteria as the production prompt.
+- **Per-article evaluation.** One article, one yes/no. No cluster inheritance.
+- **Matched inputs.** Whatever the annotator sees, the model sees the same thing.
+
+The annotator — the same human who runs production review — did the annotations. Different methodology this time.
+
+The infra is a curses TUI that logs every interaction: what the annotator looked at, whether they clicked through to read the full article, how long they spent per article. Annotations land in `articles_solo.jsonl`. 998 usable labels out of 1001 (3 defective).
+
+Base rate: 33.6% yes. `GUIDE.md` originally said "~3% positive," but the dataset was pre-filtered toward positives for labeling efficiency. Something to remember when reading the numbers.
+
+Repo: [ei-bench](https://github.com/jcl80/ei-bench).
+
+# Benchmark harness
+
+- Per-article binary classification. `client.responses.parse` with a Pydantic `Literal["yes", "no"]` schema. 0 parse errors across 8 full runs.
+- Async concurrency with a semaphore. Pure I/O, same code drives local vLLM later via `--base-url`.
+- Inputs: title + summary only. The annotator read the full article in 24/1001 cases (2.4%), so sending article text by default would give the model more info than the median human call.
+- Output: `bench/results/<ts>_<model>_<prompt>/output.jsonl` + `metadata.json` per run.
+- Eval reports P / R / F1 with bootstrap 95% CIs (1000 iterations), confusion matrix, prevalence, flag rate.
+
+# Prompts
+
+Four variants. **prompt_a** is the production criteria, verbatim from `GUIDE.md`, including the "precursors to existential risk" clause. **prompt_b** is the bare question. **prompt_c** is longer — 9 worked examples, an explicit "small-fry in ongoing wars" rule, a "We are in 2026" date anchor, and — crucially — drops the precursors clause. **prompt_d** is a bare variant asking about "existential or global" importance.
+
+prompt_a and prompt_b are the baselines. prompt_c and prompt_d were designed after inspecting error modes from the first runs.
+
+# Results: baselines
+
+N = 997. Prevalence = 33.6%.
+
+| Run | Precision | Recall | F1 | Flag rate |
+|-----|-----------|--------|-----|-----------|
+| gpt-5-mini × prompt_a | 0.33 [0.30, 0.36] | 0.85 [0.81, 0.88] | 0.48 [0.45, 0.51] | 86.0% |
+| gpt-5-mini × prompt_b | 0.29 [0.18, 0.42] | 0.05 [0.03, 0.07] | 0.08 [0.05, 0.12] | 5.5% |
+| gpt-5 × prompt_a | 0.35 [0.32, 0.38] | 0.89 [0.85, 0.92] | 0.50 [0.47, 0.54] | 85.2% |
+| gpt-5 × prompt_b | 0.41 [0.28, 0.53] | 0.07 [0.04, 0.09] | 0.11 [0.07, 0.15] | 5.4% |
+
+The prompt dominates the model. F1 CIs between prompt_a (0.45–0.54) and prompt_b (0.05–0.15) don't overlap at all. Between gpt-5 and gpt-5-mini on the same prompt, CIs overlap heavily. The 5×-more-expensive model is not statistically meaningfully better here.
+
+prompt_a over-flags (86% vs 33.6% true prevalence). prompt_b under-flags (5%). Best F1 = 0.50 at 33.6% prevalence is marginally better than always predicting yes (F1 ≈ 0.50 mechanically at that prevalence).
+
+Neither baseline is well-calibrated. Something else is going on.
+
+# Error analysis
+
+Extracted gpt-5 × prompt_a errors. 551 FPs, 37 FNs, 298 TPs, 111 TNs.
+
+**FP pattern:** dominated by daily-news developments of the ongoing US–Iran war. Pope ceasefire calls. Trump diplomatic appeals. "Morning Briefing" roundups. Australian aid appeals. UN commentary. prompt_a's precursors clause seems to be the driver — the model reads anything war-adjacent as "meaningfully increases the probability of escalation" and flags yes.
+
+**FN pattern** (37 total, all inspected):
+
+- ~20 cases that should have been yes under any reasonable reading — B-2 strikes, Russia→Iran drone supply, Larijani assassination, 4.9M children under five at risk, 1,200 children killed in Yemen, bird flu, measles surge, Houthi new capabilities. The model was just too conservative.
+- ~5 cases where AI category was under-covered: Shor's algorithm on 10k qubits, Claude Code source leak, Gemma 4 on Pixel TPUs. The annotator labels AI capability events as yes. prompt_a doesn't name AI as a category.
+- ~5 cases that are pure precursors: "Horrors If Vaccines Vanish", "Depleting Missile Defense Interceptor Inventory". These rely on the annotator's liberal reading of the precursors clause.
+
+Design hypothesis for prompt_c: drop the precursors clause, add worked examples (including AI), add an explicit small-fry rule for ongoing wars. This should fix the FPs and the AI-category FNs.
+
+# Results: prompt_c and prompt_d
+
+| Run | Precision | Recall | F1 | Flag rate |
+|-----|-----------|--------|-----|-----------|
+| gpt-5-mini × prompt_c | 0.33 [0.30, 0.36] | 0.86 [0.82, 0.90] | 0.48 [0.44, 0.51] | 87.0% |
+| gpt-5-mini × prompt_d | 0.35 [0.31, 0.38] | 0.61 [0.56, 0.67] | 0.44 [0.40, 0.48] | 59.5% |
+| gpt-5 × prompt_c | 0.35 [0.32, 0.38] | 0.74 [0.70, 0.79] | 0.48 [0.44, 0.51] | 71.3% |
+| gpt-5 × prompt_d | 0.33 [0.29, 0.37] | 0.61 [0.55, 0.66] | 0.43 [0.39, 0.47] | 61.9% |
+
+Aggregate F1 is flat at 0.48–0.50 across every criteria-bearing prompt and both models. The sharper rules didn't lift F1.
+
+# Flip analysis
+
+A flat F1 can hide behavioral shifts. gpt-5_prompt_a vs gpt-5_prompt_c, same model, prompt swap, per-article:
+
+| Transition | Count |
+|------------|-------|
+| FP → TN (fixed) | 119 |
+| FN → TP (fixed) | 7 |
+| TN → FP (new) | 30 |
+| TP → FN (broken) | 56 |
+| Unchanged | 785 |
+| **Net correct labels** | **+40** |
+
+prompt_c fixed 119 FPs and broke 56 TPs. Net +40 correct, but swamped by the 33.6% base rate so F1 doesn't move.
+
+The fixed FPs are exactly the noise we wanted gone: Pope ceasefire calls, Trump diplomatic appeals, Morning Briefing, Australian aid. The small-fry rule worked.
+
+The broken TPs are the binding finding:
+
+- "Israel launches fresh strike on south Beirut"
+- "Israel expands ground campaign in southern Lebanon"
+- "Sudanese Civil War Escalates as Drone Strikes Deepen Civilian Toll"
+- "Yemen's Houthis enter Iran–Israel war"
+- "US deploying 3 more warships and ~2,500 more Marines"
+- "Despite ceasefire, Gaza death surges to 72,265"
+
+Under prompt_c's own rule, these are yes — "developments involving escalations or nuclear weapons are not small fry." The annotator labeled them yes. The model classified them as small-fry ongoing-war developments.
+
+The binding boundary is escalation-vs-small-fry. That's the one judgment call the criteria require, and no wording we tried makes the model reliably make it from title + summary alone. prompt_a errs toward "everything is escalation." prompt_c errs toward "nothing is escalation." Neither hits the middle.
+
+# The ceiling
+
+Three lines of evidence converge on F1 ~ 0.50:
+
+- Four distinct prompts, two models, four criteria-bearing runs — every F1 in [0.48, 0.50]. CIs overlap almost entirely.
+- The failure mode is load-bearing. Escalation-vs-small-fry is the judgment the criteria are asking for, and the model can't consistently make it.
+- Some of the annotator's labels are calls a second annotator might dispute. "Hotter temperatures may push millions toward a more sedentary lifestyle" is a yes in this set. Not obviously wrong, but the kind of call where inter-annotator agreement matters.
+
+Without a second annotator, we can't tell whether F1 = 0.50 is the model ceiling or the labels ceiling.
+
+# Why we didn't fine-tune
+
+My instinct at this point was to fine-tune. But first:
+
+- **Calibration, not capability, is the failure mode.** Recall on prompt_a is 0.85–0.89. The model can find positives. The problem is where it draws the yes/no line. Prompts move that line cheaply. Fine-tuning moves it expensively and less reversibly.
+- **Labels haven't been validated.** Phase 2 — overlap annotation for inter-annotator agreement — hasn't been run. Fine-tuning on single-annotator labels of unknown kappa risks memorizing the annotator's idiosyncratic reading rather than a shared construct.
+- **The endgame isn't an OpenAI fine-tune.** The thesis of this series is local inference on gpt-oss-120b. A fine-tuned gpt-5-mini doesn't transfer. The thing worth fine-tuning is a local model, once labels are stable and we have a larger adjudicated set.
+- **Ceiling not yet measured.** You don't optimize against a noisy target without knowing its noise floor.
+- **Cost asymmetry.** A bad prompt iteration is $5 and 20 minutes. A bad fine-tune is tens to hundreds of dollars, hours of iteration, and failure modes that are hard to diagnose without a larger clean eval set.
+
+# Pivot
+
+At this point we had a choice. Either:
+
+- Run phase-2 overlap annotation. Compute Cohen's κ. Adjudicate disagreements. Build a cleaner gold set. Then iterate on the escalation-vs-small-fry boundary with worked examples. Or fine-tune a local model against the adjudicated set.
+- Or step back and ask whether the question ei-bench was built to answer was the right one for the resources we had.
+
+We picked the second.
+
+ei-bench is trying to answer: "can a local model make the same existential-importance calls a trained analyst would make?" That requires careful multi-annotator labels that are stable under review. One annotator. Weeks of runway. No consensus on where the criteria live. The scope was mismatched with the resources.
+
+Threat-bench — the work from Part 0 — answers an easier question with the same shape: "can a local model reproduce GPT-5's output on Sentinel's existing threat-analysis pipeline?" The labels are GPT-5's predictions on the same inputs the candidate model sees.
+
+This is a strict downgrade in what you're measuring. You're not asking "is the local model correct about reality?" You're asking "does it agree with GPT-5?" If GPT-5 is systematically wrong, the student learns to be wrong the same way.
+
+In exchange:
+
+- The labels are structurally reproducible. A good-enough student could in principle match them. No hidden context, no batch effects, no access asymmetry.
+- You can generate them at whatever volume. Marginal cost of more data is API dollars, not annotator-weeks.
+- Disagreement is unambiguous. Model vs GPT-5 is a clean signal. Not "the label is noisy" — the label is deterministic.
+
+That last one is the point. When you're iterating, you need to know that errors are errors. ei-bench's disagreements were a mix of model errors, label errors, and legitimate judgment disputes. You can't debug against that.
+
+# What we learned
+
+**Ground truth you can't reproduce isn't ground truth.** ei-bench's labels were legitimate. The annotator is careful. The criteria were written down. But the binding judgment — escalation-vs-small-fry — sits in a place the model can't reliably reach from title + summary alone, and may not sit in a place any two humans would reach the same way.
+
+**Scope your evaluation to what your measurement setup can support.** An annotation campaign big enough to measure the label ceiling is a full project on its own. We didn't have that runway. So we changed the question to one our data could actually answer.
+
+**A ceiling you haven't measured is not a ceiling.** F1 = 0.50 could be the model. Could be the labels. Could be the input format. Without phase-2 annotation, we don't know which, and optimizing against it is gambling.
+
+# What's next
+
+Part 3 is more threat-bench work. Fine-tuning attempts, what worked and what didn't, and a bag-of-words model ensembled with a zero-shot NLI classifier pushing F1 past either one individually. And some expected out of distribution debacle.

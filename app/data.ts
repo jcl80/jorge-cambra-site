@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 2',
+    description: 'Ei-bench: benchmarking GPT-5, GPT-5-mini, and open-weight models against clean human labels on existential importance classification.',
+    link: '/blog/offloading-sentinel-local-inference-part-2',
+    uid: 'blog-sentinel-local-inference-2',
+  },
+  {
     title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 1',
     description: 'Isolating model intelligence: how good are open-weight models at understanding threats?',
     link: '/blog/offloading-sentinel-local-inference-part-1',
@@ -134,18 +140,18 @@ export const BLOG_POSTS: BlogPost[] = [
     link: '/blog/offloading-sentinel-local-inference-part-0',
     uid: 'blog-sentinel-local-inference-0',
   },
-  {
-    title: 'Songs That Have Me on the Brink of Buying an Electric Guitar',
-    description: '',
-    link: '/blog/songs-electric-guitar',
-    uid: 'blog-songs-electric-guitar',
-  },
-  {
-    title: 'Thoughts Worth Developing for a Recently Memory-Wiped Human',
-    description: '',
-    link: '/blog/thoughts-for-a-memory-wiped-human',
-    uid: 'blog-memory-wiped-thoughts',
-  },
+  // {
+  //   title: 'Songs That Have Me on the Brink of Buying an Electric Guitar',
+  //   description: '',
+  //   link: '/blog/songs-electric-guitar',
+  //   uid: 'blog-songs-electric-guitar',
+  // },
+  // {
+  //   title: 'Thoughts Worth Developing for a Recently Memory-Wiped Human',
+  //   description: '',
+  //   link: '/blog/thoughts-for-a-memory-wiped-human',
+  //   uid: 'blog-memory-wiped-thoughts',
+  // },
   {
     title: 'Potential Projects',
     description: 'A strategic evaluation of where Sentinel\'s time and resources are best spent',
