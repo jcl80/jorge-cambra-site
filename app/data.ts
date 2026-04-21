@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Conclusions',
+    description: 'What works for what, what to buy, what to build next.',
+    link: '/blog/offloading-sentinel-local-inference-conclusions',
+    uid: 'blog-sentinel-local-inference-conclusions',
+  },
+  {
     title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Part 3',
     description: 'threat-bench, take two: fine-tuning failures, a bag-of-words model that wasn\'t supposed to work, and an ensemble gain that mostly didn\'t survive holdout.',
     link: '/blog/offloading-sentinel-local-inference-part-3',
