@@ -1,0 +1,77 @@
+# FermiBench: Evaluating LLM Quantitative Reasoning with Distributional Fermi Estimation
+
+*Draft.*
+
+# Scoring Methodology
+
+Ground truths are expressed as multi-factor decompositions in the fermi DSL (Sempere, 2024), the same format models produce their answers in. The fermi binary evaluates each decomposition via Monte Carlo sampling and returns a 90% credible interval, which the scoring harness fits as a lognormal and resamples for scoring. The lognormal refit is exact for chains of multiplication and division on lognormals and slightly lossy otherwise. We also store each ground truth in Squiggle (QURI Team, 2024), which offers named variables and native distribution evaluation. The project inherited the fermi DSL from Sempere's original CLI; Squiggle may become the primary format in future iterations as it supports richer distribution types, but for now both are maintained in parallel.
+
+CRPS-log is the primary ranking metric. The Continuous Ranked Probability Score (Gneiting & Raftery, 2007, §4.2) compares a model's distribution against a point value. Here, the median of the ground truth distribution is derived automatically by sampling the ground truth fermi block. CRPS is a strictly proper scoring rule: the only strategy that minimizes expected score is reporting honest beliefs. It rewards both accuracy (proximity to truth) and calibration (appropriate spread).When the predicted distribution collapses to a point forecast, CRPS reduces to absolute error. This is standard practice for evaluating distributional forecasts -  Metaculus uses it for continuous questions, and it has been the default in meteorological forecast verification for decades.
+
+Cramér-log is reported alongside as a shape-sensitive cross-check . It compares two full sample distributions rather than reducing one to a point. It is the d=1 special case of the energy score (Gneiting & Raftery, 2007, §6.2). It is symmetric, always finite, and satisfies the triangle inequality.
+
+We retain KL divergence as a diagnostic. It is disproportionately sensitive to overconfidence , thus a model that is close to truth but too narrow will score well on CRPS and Cramér but poorly on KL. We don't use it for ranking because it can blow up to infinity when distributions barely overlap, and it requires parametric forms.
+
+
+# Ground Truth Methodology
+
+Following convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022), all factors are modeled as lognormal distributions. The lognormal is the default in both the fermi DSL and Squiggle (QURI Team, 2024). It is the natural choice for positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are themselves lognormal.
+
+For each factor, we use the most recent complete calendar year from the most authoritative primary source. We follow each source's own reporting convention : eg FAOSTAT production data is single-year; indicators reported as multi-year averages are used as such.
+
+Each factor's 90% CI represents epistemic uncertainty about the true value, not a forecast of year-to-year variation.
+
+Factor uncertainty follows a tiered rule, drawing on IPCC 2006 Guidelines for National Greenhouse Gas Inventories (Vol. 1, Ch. 3) and the EDGAR emissions inventory (Solazzo et al., 2021, Table 1):
+
+**Tier 0 — Negligible uncertainty.** Negligible relative to other factors in the decomposition (e.g., a well-surveyed country's land area). Entered as a scalar.
+
+**Tier 1 — Two independent sources disagree.** Their range defines the 90% CI. "Independent" means independently produced: FAOSTAT vs USDA PSD qualifies; FAOSTAT vs World Bank does not (World Bank sources FAOSTAT for agriculture).
+
+**Tier 2 — One source, official data.** Entered as a lognormal with ±5% spread for industrialized countries, ±10% for developing countries. These defaults come from IPCC activity data uncertainty tables.
+
+**Tier 3 — One source, estimated or imputed data.** Entered with ±15–20% spread. FAO-imputed values are regression-filled gaps, not measurements.
+
+When a single source reports a range rather than a point (e.g., "150–200 kWh/m²/yr depending on region"), that range defines the 90% CI directly.
+Each ground truth is stored in both fermi DSL and Squiggle syntax. All source URLs are embedded as comments in the files.
+
+## Worked Example: Germany Coal-to-Solar Land Fraction
+
+What fraction of Germany's total land area would need to be covered by solar panels to replace its annual coal electricity generation?
+
+**Ground truth (fermi DSL):**
+
+```text
+# Sources:
+#   Coal: Fraunhofer ISE 93.9 TWh, SMARD 98.3 TWh (2025)
+#     https://www.ise.fraunhofer.de/en/press-media/press-releases/2026/german-public-electricity-generation-in-2025-wind-and-solar-power-take-the-lead.html
+#     https://www.smard.de/page/en/topic-article/5892/215704/evaluation-of-last-year
+#   Solar yield: PVPro Solar 150-200 kWh/m²/yr
+#     https://pvprosolar.de/en/photovoltaic-system-per-square-meter/
+#   Germany area: Eurostat 357,022 km²
+#     https://ec.europa.eu/eurostat/databrowser/view/reg_area3/default/table?lang=en
+
+93.9B 98.3B    # coal generation kWh, Fraunhofer ISE vs SMARD (Tier 1)
+/ 150 200      # solar yield kWh/m²/yr, single source range
+/ 357B         # Germany area m², Eurostat (Tier 0)
+```
+
+**Ground truth (Squiggle):**
+
+```javascript
+coal_kwh = to(93.9e9, 98.3e9)
+solar_yield = to(150, 200)
+germany_m2 = 357022e6
+coal_kwh / solar_yield / germany_m2
+```
+
+Result: 90% CI approximately [0.0013, 0.0018], median ~0.0015. About 0.15% of Germany, roughly 550 km² of panel area.
+
+# References
+
+- Gneiting, T. & Raftery, A.E. (2007). Strictly Proper Scoring Rules, Prediction, and Estimation. *JASA* 102(477): 359–378.
+- Gooen, O. (2016). [Lognormal vs. normal](https://medium.com/guesstimate-blog/lognormal-normal-833bf413c7a3). *Guesstimate Blog.*
+- IPCC (2006). *Guidelines for National Greenhouse Gas Inventories*, Vol. 1, Ch. 3: Uncertainties.
+- QURI Team (2024). [Squiggle Language Documentation](https://www.squiggle-language.com/docs/). (`to(5, 10)` creates a lognormal with those as 5th/95th percentiles; lognormal is the default when both numbers are positive.)
+- Sempere, N. (2022). [Introduction to Fermi Estimates](https://forum.effectivealtruism.org/posts/cpfgq84B8XHXPWLcM/introduction-to-fermi-estimates). *EA Forum.* ("Assume that guesses are independent lognormals.")
+- Sempere, N. (2024). [*Fermi CLI*](https://codeberg.org/NunoSempere/fermi).
+- Solazzo, E. et al. (2021). Uncertainties in the EDGAR emission inventory of greenhouse gases. *Atmos. Chem. Phys.* 21: 5655–5683.
