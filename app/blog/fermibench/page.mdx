@@ -2,6 +2,34 @@
 
 *Draft.*
 
+# Bench Design & Question Set
+
+The v1 bench contains 43 questions: 23 originals from Nuño Sempere's fermibench (2024) and 20 new questions written for this iteration. Both sets go through the same scorer; the dashboard exposes them as separate filters.
+
+The new questions mostly follow the following style:
+
+- **Single quantity.** Each question asks for one number — kilograms, years, ratio, fraction. Compound questions are hard to score and hard to reason about.
+- **Ratio recasting.** "How many kilowatt-hours of electricity does Paraguay generate per tonne of CO₂ it emits?" rather than "What is Paraguay's CO₂ intensity?" The ratio form forces the model to commit to both a numerator and a denominator.
+- **Often counterfactual.** "If Tokyo's entire population commuted by car instead of rail, how many lane-kilometers of highway would be needed?" Counterfactuals strip away easily-googleable values and push the model toward decomposition. They also limit the value of web search, due to not having a directly retrievable answer.
+- **No internet shortcuts.** Most answers are derivable from primary data but not published anywhere as a single number. A model can find Paraguay's electricity generation; it can find Paraguay's fossil CO₂; the ratio is something only the model can compute.
+- **Topical and geographic diversity.** The 20 new questions touch energy, agriculture, water, infrastructure, demographics, public safety, and trade across 14 countries, including several (Paraguay, Honduras, Myanmar, Timor-Leste) whose statistics are less likely to appear in training data.
+
+## Question text ambiguity
+
+While running the v1 bench we found that noun-level ambiguity in the question text is one of the largest sources of model-to-model disagreement. Five questions produced scope-ambiguity failures:
+
+| Question | Ambiguous noun | Two defensible readings |
+|---|---|---|
+| chaco-soybean-crossover | "the Chaco" | Paraguay's Chaco vs. Gran Chaco biome (3 countries) |
+| california-almond-water-per-dollar | "water embedded" | Irrigation only vs. total water footprint |
+| electricity-vs-soy-per-worker | "workers in the [sector]" | Direct farm labor vs. full value chain |
+| ssa-solar-ethiopia-gdp-years | "rooftop solar panel" | Bare panel vs. home system (panel + inverter + battery) |
+| germany-coal-to-solar-land-fraction | "fraction of land covered" | Module area vs. installation footprint (with row spacing) |
+
+The pattern: a noun phrase that reads unambiguous to the question author has two readings that frontier models split between, with results differing by a roughly constant factor (2–5×) per question.
+
+Some of it could have been avoided with one extra sentence of specification; some is inherent to how humans ask Fermi questions. Future iterations should adopt a disambiguation pass: for each question, write down which readings exist and explicitly pick one before the ground truth is authored.
+
 # Scoring Methodology
 
 Ground truths are expressed as multi-factor decompositions in the fermi DSL (Sempere, 2024), the same format models produce their answers in. The fermi binary evaluates each decomposition via Monte Carlo sampling and returns a 90% credible interval, which the scoring harness fits as a lognormal and resamples for scoring. The lognormal refit is exact for chains of multiplication and division on lognormals and slightly lossy otherwise. We also store each ground truth in Squiggle (QURI Team, 2024), which offers named variables and native distribution evaluation. The project inherited the fermi DSL from Sempere's original CLI; Squiggle may become the primary format in future iterations as it supports richer distribution types, but for now both are maintained in parallel.
@@ -34,7 +62,7 @@ Factor uncertainty follows a tiered rule, drawing on IPCC 2006 Guidelines for Na
 When a single source reports a range rather than a point (e.g., "150–200 kWh/m²/yr depending on region"), that range defines the 90% CI directly.
 Each ground truth is stored in both fermi DSL and Squiggle syntax. All source URLs are embedded as comments in the files.
 
-## Worked Example: Germany Coal-to-Solar Land Fraction
+# Worked Example: Germany Coal-to-Solar Land Fraction
 
 What fraction of Germany's total land area would need to be covered by solar panels to replace its annual coal electricity generation?
 
@@ -65,6 +93,92 @@ coal_kwh / solar_yield / germany_m2
 ```
 
 Result: 90% CI approximately [0.0013, 0.0018], median ~0.0015. About 0.15% of Germany, roughly 550 km² of panel area.
+
+# Preliminary Results
+
+The v1 bench (5 models × 20 questions × 2 formats = 200 GT-scored runs) is complete; the v2 search-arm is partial (gpt-5.1 finished, Gemini and Sonnet still pending due to an OpenRouter key-limit interruption). This section reports what landed.
+
+All results are scored against the verified Tier 1/2/3 ground truth distributions; pre-verification YAML references are not used. CRPS-log is the primary ranking metric (median across each model's 20 questions in a given format); Cramér-log reported alongside as the shape-sensitive cross-check.
+
+## 5-model headline (v1)
+
+| Model | Best format | n | Med CRPS | Med Cramér | Fail rate |
+|---|---|---|---|---|---|
+| gpt-5.1 (native OpenAI) | fermi | 20 | 0.164 | 0.095 | 0% |
+| gemini-2.5-pro (OR) | fermi | 20 | 0.222 | 0.182 | 10% |
+| claude-sonnet-4.5 (OR) | squiggle | 20 | 0.257 | 0.210 | 0% |
+| deepseek-r1 (OR) | fermi | 20 | 0.329 | 0.245 | 5% |
+| meta-llama/llama-3.3-70b (OR) | squiggle | 20 | 1.988 | 1.784 | 0% |
+
+(Fail rate = fraction of the 20 runs where extraction failed, DSL parser rejected the block, or scoring raised an exception.)
+
+Three observations.
+
+**The frontier models cluster tight.** gpt-5.1 and gemini-2.5-pro both produce median CRPS below 0.25. Both models bracket the verified ground truth on 17–18 of the 20 questions, suggesting strong Fermi-estimation capability. But, without a formal human baseline, the comparison to human analysts remains informal.
+
+**The mid-tier separates from the frontier by ~2×.** Sonnet 4.5 and DeepSeek R1 land in the 0.26–0.33 range. Still reasonable, but with visibly wider CIs and a couple of catastrophic outliers per model. The bench distinguishes the frontier from mid-tier cleanly; it does so on score distribution shape, not just average score.
+
+**Llama-3.3-70b is the floor.** A median CRPS of 1.988 means the model's distribution typically misses the ground truth by ~7× on either side. Not competitive with the frontier four on Fermi-style distributional estimation. Useful as a datapoint to show what the bench's lower end looks like.
+
+## Format-choice effect
+
+Each model's median CRPS in each DSL:
+
+| Model | fermi CRPS | squiggle CRPS | gap |
+|---|---|---|---|
+| gpt-5.1 | 0.164 | 0.256 | fermi 1.6× better |
+| gemini-2.5-pro | 0.222 | 0.251 | flat |
+| claude-sonnet-4.5 | 0.720 | 0.257 | squiggle 2.8× better |
+| deepseek-r1 | 0.329 | 0.430 | fermi 1.3× better |
+| llama-3.3-70b | 2.176 | 1.988 | flat (both bad) |
+
+The largest format gap is Claude Sonnet 4.5: its fermi median CRPS (0.720) is 2.8× worse than its Squiggle median (0.257). Inspecting the underlying fermi runs shows the gap is dominated by unit-handling errors on long multiplicative chains. Squiggle's scientific notation forces Sonnet to be explicit about scales in a way the fermi DSL's K/M/B/T suffixes do not.
+
+
+## The v2 search arm (gpt-5.1 only, partial)
+
+The v2 protocol runs each model against all 20 questions twice — once with web search enabled, once without — to test whether web search closes stale-priors gaps. So far only gpt-5.1 has completed both arms; Gemini 2.5 Pro and Claude Sonnet 4.6 runs are pending.
+
+On gpt-5.1, the aggregate effect of web search is small and format-asymmetric:
+
+| Format | Search | Med CRPS | Med Cramér |
+|---|---|---|---|
+| fermi | off | 0.198 | 0.112 |
+| fermi | on | 0.290 | 0.251 |
+| squiggle | off | 0.263 | 0.245 |
+| squiggle | on | 0.110 | 0.093 |
+
+The squiggle-with-search combination is the best (model, format, search) result we have measured on these 20 questions. But the fermi runs go the opposite way: search-on is worse than search-off (CRPS 0.290 vs. 0.198). This is not what the simple "search closes knowledge gaps" hypothesis predicts.
+
+Two mechanisms plausibly contribute. First, attention budget: search-on responses contain ~3K characters of reasoning content on average vs. ~5K for search-off, suggesting the model spent more attention processing search results and less on careful decomposition. Second, format interaction: Squiggle's variable-assignment style may compose with web search better than fermi's stack-based DSL, where injecting source data into a long multiplicative chain is harder. We cannot rule out that this is a sample-size artifact at n=20.
+
+## Stale-priors case study: Honduras
+
+The stale-priors hypothesis is most directly testable on honduras-costa-rica-homicide-gap, where v1 models uniformly anchored on historical (~35–55/100k) homicide rates rather than current InSight Crime values (~23/100k). Web search should retrieve current numbers and close the gap.
+
+It didn't, on gpt-5.1:
+
+| Format | Search | Cramér | Model 90% CI |
+|---|---|---|---|
+| fermi | off | 0.857 | 1,030–6,310 |
+| fermi | on | 1.016 | 1,480–5,020 |
+| squiggle | off | 0.719 | 1,143–3,451 |
+| squiggle | on | 1.047 | 1,988–3,038 |
+
+(Ground truth: 669–887 fewer homicides/yr.)
+
+Every search-on run is farther from the GT than its search-off counterpart. The search-on fermi block still uses `* 15 50` for the homicide-rate gap per 100k — values consistent with historical-era rates, despite search being available and used.
+
+The implication is suggestive: search availability does not automatically translate into prior updating. The model needs to recognize when an existing prior is stale, decide to trust the search result over its internalized number, and integrate the new value into its decomposition. Just having search enabled is not enough — at least for gpt-5.1, at least on this question.
+
+This is one model on one question and shouldn't be over-read. Whether it generalizes to other stale-priors questions and to other models is an open question for the v2 section.
+
+## Caveats
+
+- **n=20 per cell.** Medians on samples of 20 are noisy. A new question can shift medians by ~5–10%.
+- **v2 is partial.** Gemini and Sonnet have 8 and 0 successful runs respectively in the search arm. The search-effect finding currently rests on gpt-5.1 alone.
+- **Single seed.** All v2 runs used seed=1. The noise floor from sampling-based scoring is reproducible but not bootstrapped.
+- **Sempere set under-scored.** 20 of the 23 Sempere originals have no verified GT distribution yet. Only 3 are currently GT-scored.
 
 # References
 
