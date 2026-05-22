@@ -1,0 +1,333 @@
+# Evaluating LLM Quantitative Estimation Under Uncertainty
+
+*How good are frontier LLMs at estimating quantities they don't know? How do they compare with humans? Are there clean ways to measure this?*
+
+## Why This Benchmark
+
+Fermi estimation problems are interesting because they test capabilities we care about deeply: the recursive nature of subproblems, creativity in solutions, need for reasonable abstractions, and commonsense reasoning (Kalyan et al., 2021). We also care about instruction following, adherence to the question as stated, and the ability to express calibrated uncertainty.
+
+Building a clean benchmark for this turned out to be as hard as expected, mainly because pinning ground truth to non-trivial Fermi problems is genuinely difficult. 
+
+After reviewing the literature, we found that many of the skills we wanted to test could also be measured on broader quantitative estimation tasks. We adapted Open Estimate's methodology of cross-referencing public tabular datasets (FAOSTAT, OWID, UNESCO UIS, UNODC, World Bank, national statistics offices) to compose questions with verifiable ground truth. The individual statistics may exist in training data, but the composed ratio does not, so the models must compute rather than recall.
+
+---
+
+## Bench Design & Question Set
+
+The v1 bench contains 43 questions: 23 originals from Nuño Sempere's fermibench (2024) and 20 new questions written for this iteration. 
+
+The new questions mostly follow this style:
+
+- **Single quantity.** Each question asks for one number — kilograms, years, ratio, fraction. Compound questions are hard to score and hard to reason about.
+- **Ratio recasting.** "How many kilowatt-hours of electricity does Paraguay generate per tonne of CO₂ it emits?" rather than "What is Paraguay's CO₂ intensity?" The ratio form forces the model to commit to both a numerator and a denominator.
+- **Often counterfactual.** "If Tokyo's entire population commuted by car instead of rail, how many lane-kilometers of highway would be needed?" Counterfactuals strip away easily-googleable values and push the model toward decomposition. They also limit the value of web search, due to not having a directly retrievable answer.
+- **No internet shortcuts.** Most answers are derivable from primary data but not published anywhere as a single number. A model can find Paraguay's electricity generation; it can find Paraguay's fossil CO₂; the ratio is something only the model can compute.
+- **Topical and geographic diversity.** The 20 new questions touch energy, agriculture, water, infrastructure, demographics, public safety, and trade across 14 countries, including several (Paraguay, Honduras, Myanmar, Timor-Leste) whose statistics are less likely to appear in training data.
+
+### Question text ambiguity
+
+While running the v1 bench we found that noun-level ambiguity in the question text is one of the largest sources of model-to-model disagreement. Five questions produced scope-ambiguity failures:
+
+| Question | Ambiguous noun | Two defensible readings |
+|---|---|---|
+| chaco-soybean-crossover | "the Chaco" | Paraguay's Chaco vs. Gran Chaco biome (3 countries) |
+| california-almond-water-per-dollar | "water embedded" | Irrigation only vs. total water footprint |
+| electricity-vs-soy-per-worker | "workers in the [sector]" | Direct farm labor vs. full value chain |
+| ssa-solar-ethiopia-gdp-years | "rooftop solar panel" | Bare panel vs. home system (panel + inverter + battery) |
+| germany-coal-to-solar-land-fraction | "fraction of land covered" | Module area vs. installation footprint (with row spacing) |
+
+The pattern: a noun phrase that reads unambiguous to the question author has two readings that frontier models split between, with results differing by a roughly constant factor (2–5×) per question.
+
+Some of it could have been avoided with one extra sentence of specification; some is inherent to how humans ask Fermi questions. Future iterations should adopt a disambiguation pass: for each question, write down which readings exist and explicitly pick one before the ground truth is authored.
+
+---
+
+## Scoring Methodology
+
+Ground truths are expressed as multi-factor decompositions in the fermi DSL (Sempere, 2024), the same format models produce their answers in. The fermi binary evaluates each decomposition via Monte Carlo sampling and returns a 90% credible interval, which the scoring harness fits as a lognormal and resamples for scoring. The lognormal refit is exact for chains of multiplication and division on lognormals and slightly lossy otherwise. We also store each ground truth in Squiggle (QURI Team, 2024), which offers named variables and native distribution evaluation. The project inherited the fermi DSL from Sempere's original CLI; Squiggle is now the primary format as it supports richer distribution types, though the fermi DSL is still maintained in parallel.
+
+We evaluated three scoring rules before settling on one.
+
+**CRPS-log** (Continuous Ranked Probability Score; Gneiting & Raftery, 2007, §4.2) compares a model's distribution against a point value — here, the median of the ground truth distribution. CRPS is a strictly proper scoring rule: the only strategy that minimizes expected score is reporting honest beliefs. It rewards both accuracy and calibration, and when the predicted distribution collapses to a point forecast it reduces to absolute error. This is standard practice for distributional forecasts — Metaculus uses it for continuous questions, and it has been the default in meteorological forecast verification for decades.
+
+**KL divergence** is disproportionately sensitive to overconfidence: a model that is close to truth but too narrow will score poorly. It can blow up to infinity when distributions barely overlap, and it requires parametric forms, making it unreliable as a ranking metric.
+
+**Cramér-log** is the d=1 special case of the energy score (Gneiting & Raftery, 2007, §6.2). It compares two full sample distributions rather than reducing one to a point. It is symmetric, always finite, and satisfies the triangle inequality.
+
+For all results going forward, we report Cramér-log on Squiggle-format outputs as the primary metric. CRPS-log was our initial primary but reduces one distribution to a point (the GT median), losing shape information that matters for calibration assessment. KL divergence is too brittle for ranking. Cramér-log compares two full distributions, is always finite, and distinguishes both accuracy and calibration failures cleanly. For questions drawn from existing benchmarks (REALFP, Science Olympiad), we also report fp_score to maintain comparability with published baselines.
+
+---
+
+## Ground Truth Methodology
+
+Following convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022), all factors are modeled as lognormal distributions. The lognormal is the default in both the fermi DSL and Squiggle (QURI Team, 2024). It is the natural choice for positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are themselves lognormal.
+
+For each factor, we use the most recent complete calendar year from the most authoritative primary source. We follow each source's own reporting convention: e.g., FAOSTAT production data is single-year; indicators reported as multi-year averages are used as such.
+
+Each factor's 90% CI represents epistemic uncertainty about the true value, not a forecast of year-to-year variation.
+
+Factor uncertainty follows a tiered rule, drawing on IPCC 2006 Guidelines for National Greenhouse Gas Inventories (Vol. 1, Ch. 3) and the EDGAR emissions inventory (Solazzo et al., 2021, Table 1):
+
+**Tier 0 — Negligible uncertainty.** Negligible relative to other factors in the decomposition (e.g., a well-surveyed country's land area). Entered as a scalar.
+
+**Tier 1 — Two independent sources disagree.** Their range defines the 90% CI. "Independent" means independently produced: FAOSTAT vs USDA PSD qualifies; FAOSTAT vs World Bank does not (World Bank sources FAOSTAT for agriculture).
+
+**Tier 2 — One source, official data.** Entered as a lognormal with ±5% spread for industrialized countries, ±10% for developing countries. These defaults come from IPCC activity data uncertainty tables.
+
+**Tier 3 — One source, estimated or imputed data.** Entered with ±15–20% spread. FAO-imputed values are regression-filled gaps, not measurements.
+
+When a single source reports a range rather than a point (e.g., "150–200 kWh/m²/yr depending on region"), that range defines the 90% CI directly.
+
+Each ground truth is stored in both fermi DSL and Squiggle syntax. All source URLs are embedded as comments in the files.
+
+---
+
+## Worked Example: Germany Coal-to-Solar Land Fraction
+
+What fraction of Germany's total land area would need to be covered by solar panels to replace its annual coal electricity generation?
+
+**Ground truth (fermi DSL):**
+
+```text
+# Sources:
+#   Coal: Fraunhofer ISE 93.9 TWh, SMARD 98.3 TWh (2025)
+#   Solar yield: PVPro Solar 150-200 kWh/m²/yr
+#   Germany area: Eurostat 357,022 km²
+
+93.9B 98.3B    # coal generation kWh, Fraunhofer ISE vs SMARD (Tier 1)
+/ 150 200      # solar yield kWh/m²/yr, single source range
+/ 357B         # Germany area m², Eurostat (Tier 0)
+```
+
+**Ground truth (Squiggle):**
+
+```javascript
+coal_kwh = to(93.9e9, 98.3e9)
+solar_yield = to(150, 200)
+germany_m2 = 357022e6
+coal_kwh / solar_yield / germany_m2
+```
+
+Result: 90% CI approximately [0.0013, 0.0018], median ~0.0015. About 0.15% of Germany, roughly 550 km² of panel area.
+
+---
+
+## Preliminary Results
+
+The v1 bench (5 models × 20 questions × 2 formats = 200 GT-scored runs) is complete; the v2 search-arm is partial.
+
+All results are scored against the verified Tier 1/2/3 ground truth distributions; pre-verification YAML references are not used. Cramér-log is the primary ranking metric (median across each model's 20 runs in its better-performing format). During early development we also evaluated CRPS-log and KL divergence; the scoring methodology section above explains why we settled on Cramér-log.
+
+### 5-model headline (v1)
+
+| Model | n | Med Cramér | Fail rate |
+|---|---|---|---|
+| gpt-5.1 (native OpenAI) | 20 | 0.095 | 0% |
+| gemini-2.5-pro (OR) | 20 | 0.182 | 10% |
+| claude-sonnet-4.5 (OR) | 20 | 0.210 | 0% |
+| deepseek-r1 (OR) | 20 | 0.245 | 5% |
+| meta-llama/llama-3.3-70b (OR) | 20 | 1.784 | 25% fermi; 0% squiggle |
+
+*gpt-5.1 v1 runs use the native OpenAI API; the v2 search arm runs via OpenRouter and shows slightly different baselines (see the search arm section). Fail rate is format-specific: Gemini's 10% is fermi-only (2/20 parser rejections; squiggle 0%); Llama's is 25% on fermi (5/20 parser rejections) and 0% on squiggle.*
+
+Each row shows the model's better-performing format. Three observations.
+
+**The frontier models cluster tight.** gpt-5.1 and gemini-2.5-pro both produce median Cramér below 0.20. gpt-5.1 brackets the ground truth on 12–14 of 20 questions depending on format; Gemini on 12–13, suggesting strong quantitative estimation capability. But, without a formal human baseline, the comparison to human analysts remains informal.
+
+**The mid-tier separates from the frontier by ~1.3×.** Sonnet 4.5 and DeepSeek R1 land in the 0.21–0.25 range. Still reasonable, but with visibly wider CIs and a couple of catastrophic outliers per model. The bench distinguishes the frontier from mid-tier cleanly; it does so on score distribution shape, not just average score.
+
+**Llama-3.3-70b is the floor.** A median Cramér of 1.784 means the model's distribution is far from the ground truth on most questions. Not competitive with the frontier four on distributional estimation. Useful as a datapoint to show what the bench's lower end looks like.
+
+### Why Squiggle: the format-choice effect
+
+During development we ran every model in both fermi DSL and Squiggle format. The performance gap was one reason we settled on Squiggle:
+
+| Model | fermi Cramér | squiggle Cramér | gap |
+|---|---|---|---|
+| gpt-5.1 | 0.095 | 0.203 | fermi 2.1× better |
+| gemini-2.5-pro | 0.182 | 0.180 | flat (tie) |
+| claude-sonnet-4.5 | 0.639 | 0.210 | squiggle 3.0× better |
+| deepseek-r1 | 0.245 | 0.381 | fermi 1.6× better |
+| llama-3.3-70b | 1.953 | 1.784 | squiggle slightly better |
+
+The largest format gap is Claude Sonnet 4.5: its fermi Cramér (0.639) is 3.0× worse than its Squiggle (0.210). Inspecting the underlying fermi runs shows the gap is dominated by unit-handling errors on long multiplicative chains. Squiggle's scientific notation and variable-assignment style forces models to be explicit about scales in a way the fermi DSL's K/M/B/T suffixes do not. Interestingly, gpt-5.1 and DeepSeek R1 go the other direction — both perform better in fermi format. The wider the format gap, the more the model is leaning on one DSL's structural affordances. For v1 we ran every model in both formats and report each model's better-performing one above; going forward the benchmark standardizes on Squiggle alone, since it had a 0% parser rejection rate across all models and minimizes catastrophic format-induced errors.
+
+### The v2 search arm (gpt-5.1 only, partial)
+
+The v2 protocol runs each model against all 20 questions twice — once with web search enabled, once without — to test whether web search closes stale-priors gaps. So far only gpt-5.1 has completed both arms; Gemini 2.5 Pro and Claude Sonnet 4.6 runs are pending.
+
+On gpt-5.1, the aggregate effect of web search is small and format-asymmetric:
+
+| Format | Search | Med Cramér |
+|---|---|---|
+| fermi | off | 0.112 |
+| fermi | on | 0.251 |
+| squiggle | off | 0.245 |
+| squiggle | on | 0.093 |
+
+The squiggle-with-search combination is the best result we have measured on these 20 questions. But the fermi runs go the opposite way: search-on is worse than search-off (Cramér 0.251 vs. 0.112). This is not what the simple "search closes knowledge gaps" hypothesis predicts.
+
+Two mechanisms plausibly contribute. First, attention budget: search-on responses contain ~3K characters of reasoning content on average vs. ~4.6K for search-off, suggesting the model spent more attention processing search results and less on careful decomposition. Second, format interaction: Squiggle's variable-assignment style may compose with web search better than fermi's stack-based DSL, where injecting source data into a long multiplicative chain is harder. We cannot rule out that this is a sample-size artifact at n=20.
+
+### Stale-priors case study: Honduras
+
+The stale-priors hypothesis is most directly testable on honduras-costa-rica-homicide-gap, where v1 models uniformly anchored on historical (~35–55/100k) homicide rates rather than current InSight Crime values (~23/100k). Web search should retrieve current numbers and close the gap.
+
+It didn't, on gpt-5.1:
+
+| Format | Search | Cramér | Model 90% CI |
+|---|---|---|---|
+| fermi | off | 0.857 | 1,030–6,310 |
+| fermi | on | 1.016 | 1,480–5,020 |
+| squiggle | off | 0.719 | 1,143–3,451 |
+| squiggle | on | 1.047 | 1,988–3,038 |
+
+(Ground truth: 669–887 fewer homicides/yr.)
+
+Every search-on run is farther from the GT than its search-off counterpart. The search-on fermi block still uses `* 15 50` for the homicide-rate gap per 100k — values consistent with historical-era rates, despite search being available and used.
+
+The implication is suggestive: search availability does not automatically translate into prior updating. The model needs to recognize when an existing prior is stale, decide to trust the search result over its internalized number, and integrate the new value into its decomposition. Just having search enabled is not enough — at least for gpt-5.1, at least on this question.
+
+This is one model on one question and shouldn't be over-read. Whether it generalizes to other stale-priors questions and to other models is an open question for the v2 section.
+
+---
+
+## Related Work
+
+### Fermi estimation benchmarks
+
+Three existing benchmarks evaluate LLMs on Fermi-style estimation.
+
+**REALFP** (Kalyan et al., 2021) contains ~928 questions (558 test split) drawn from educational and interview-prep sources. It uses fp_score, a continuous 0–1 metric that penalizes gradually per order of magnitude off. The questions are straightforward lookups or single-step estimates ("How much does a mass of 1 liter of seawater?"), and the gold labels are noisy — several contain errors or ambiguous units. We ran GPT-5.5 on the full test split and found the benchmark is not fully saturated but is methodologically limited: it tests recall and unit conversion more than structured decomposition, and the gold label quality places a ceiling on meaningful score discrimination.
+
+**Open Science Olympiad Fermi Questions** (~158 questions, used in a May 2025 TextQL eval) uses order-of-magnitude scoring: did you get the right power of ten? This is the harshest reasonable metric and also the least informative. A model that's off by 2× and a model that's off by 9× receive the same score. We ran GPT-5.5 on this set as well and found similar results: not saturated, but the scoring granularity is too coarse to distinguish interesting capability differences.
+
+**FermiEval** (Epstein et al., Stanford, arXiv:2510.26995) is the most recent entry. It adds confidence-interval scoring via the Winkler score, which is a step toward calibration measurement. However, its questions are drawn from a public Science Olympiad GitHub repository — almost certainly present in frontier training data. The paper does not run contamination checks. Its main finding, that LLMs are overconfident on Fermi confidence intervals, is plausible but hard to trust given the contamination exposure.
+
+None of these benchmarks require distributional outputs, use strictly proper scoring rules, or construct questions specifically to resist training-data contamination. FermiBench addresses all three gaps.
+
+Collaborators are currently reviewing the REALFP and Science Olympiad question sets to assess question quality, identify reusable questions, and inform the construction of new FermiBench questions. Results and per-question analysis are available on interactive dashboards: [REALFP results](https://sentinel-fermi-bench.vercel.app/realfp) and [Science Olympiad results](https://sentinel-fermi-bench.vercel.app/scioly).
+
+### Forecasting benchmarks
+
+A separate line of work evaluates LLMs on probability forecasting of future events: ForecastBench (FRI), specialized forecasting models (OpenForecaster 8B, BLF, Foresight-32B), and forecasting aggregation platforms like Metaculus. These measure a related but distinct capability: assigning probabilities to binary or categorical future outcomes, typically with retrieval augmentation. A model can be a strong forecaster and a poor quantitative estimator, or vice versa. FermiBench targets the estimation capability specifically: decomposing present-resolvable quantities into factors, assigning distributions to each, and composing them correctly.
+
+### Scoring rules for distributional evaluation
+
+The use of strictly proper scoring rules for evaluating probabilistic predictions is well-established in meteorology (Gneiting & Raftery, 2007) and forecasting platforms (Metaculus). CRPS is the standard for continuous forecasts; the energy score generalizes it to multivariate settings. The Fermi estimation literature has not adopted these tools — existing benchmarks use point-estimate metrics (fp_score, order-of-magnitude match) or the Winkler score, which evaluates interval predictions rather than full distributions. FermiBench is, to our knowledge, the first Fermi-style benchmark to score full distributional outputs using Cramér distance (the d=1 energy score), enabling joint evaluation of accuracy and calibration.
+
+---
+
+## What Models Cannot Do: A Failure Taxonomy
+
+The headline results show that frontier models are surprisingly competent at quantitative estimation. But competence on aggregate hides specific, recurring failure patterns. To identify these, we conducted a qualitative trace analysis of 18 questions from Sempere's original question set, questions that produced the largest score variance across models. By reading the full reasoning traces (including extended thinking where available), we identified four distinct failure modes.
+
+These four modes map onto two underlying skills that quantitative estimation requires. The first skill is **choosing the right decomposition** — figuring out which factors matter and which to include. The second is **estimating the adjustment correctly**: given you know the relevant conditions, getting the magnitude right. Failure modes 1 and 2 below are failures of estimation accuracy. Failure modes 3 and 4 are failures of decomposition choice. The distinction matters because different question formats test different skills: questions that hand you the variables (conditional estimation) test skill 2, while open-ended decomposition questions test both.
+
+### 1. Anchoring bias / insufficient adjustment
+
+The model has a strong prior on a quantity and fails to adjust sufficiently when the question requires a different value. This is the most documented cognitive bias in the literature (Tversky & Kahneman, 1974), and models exhibit it clearly.
+
+Our clearest example is the Honduras homicide rate. Models uniformly anchored on historical rates (~35–55 per 100,000) rather than current values (~23 per 100,000). The anchor was strong enough that even with web search enabled — where the model retrieved and cited current statistics — the decomposition block still used values consistent with the historical era. The model found the right number and didn't use it. This failure is explored in detail in the stale-priors case study above.
+
+### 2. Categorical boundary crossing
+
+A stated magnitude or condition implies a qualitative regime shift that changes the decomposition structure, but the model applies the same formula across the boundary. The model treats the problem as continuous when it is actually discrete.
+
+Example: estimating compute requirements for a 10-trillion-parameter model. At 500 billion parameters, dense training is standard. At 10 trillion, mixture-of-experts architectures become necessary, reducing the compute-to-parameter ratio by roughly 3–5×. A model that scales linearly from 500B to 10T overshoots by an order of magnitude.
+
+This failure is difficult to detect from the final answer alone. The model's number might be wrong by 10× for a reason that looks like estimation error but is actually a structural misunderstanding. Trace analysis is necessary to get a deeper comprehension.
+
+### 3. Gross vs. net (theoretical vs. practical yield)
+
+The model computes the theoretical or physics-level answer when the question asks for the real-world one. The gap between theoretical and practical is a messy factor (loss, waste, friction, attrition, behavioral adjustment) that the model knows about but does not include.
+
+Example from Sempere's question set: estimating calories obtainable from an animal. The model computes body weight × caloric density, yielding the theoretical maximum. The practical answer requires accounting for butchery yield, inedible portions, and cooking losses ; factors that reduce the number by 30–50%. In several traces, the model mentioned these factors in its reasoning and then dropped them from the final computation, producing a clean but wrong answer.
+
+This failure frequently co-occurs with reasoning evaporation: the model explores the correction in its chain of thought but reverts to the cleaner formulation when producing the output. Extended thinking models are not immune , and in some cases they are more prone to it, because longer reasoning generates more candidate threads and the selection step favors tractability over accuracy.
+
+### 4. Attribute substitution (filter-as-characterization)
+
+A demographic or conditional filter in the question is interpreted as a causal description, which constrains the decomposition to exclude the dominant factor.
+
+Example: "How much wealth does a 27-year-old American not living with their parents have at the 95th percentile?" The clause "not living with parents" is a population filter that selects a subgroup. But models read it as a characterization: this person is financially independent, self-made. That interpretation redirects the decomposition toward earned income and savings, excluding inheritance, which dominates wealth at the 95th percentile for that age group regardless of living arrangement.
+
+This is the hardest failure mode to test at scale because triggering it requires natural language framing that redirects the causal story. Questions with explicitly stated conditions (like conditional statistics drawn from survey data) don't trigger it — the filter is too clearly a filter. It may be best suited to illustrative case studies rather than scored benchmark questions.
+
+### A meta-pattern (hypothesis, not proven)
+
+Across the trace analysis, we observed a recurring pattern: when multiple reasoning threads compete, models systematically select formally clean and tractable threads over practically accurate ones. More chain-of-thought reasoning generates more candidate threads but does not improve the selection among them. This is supported by the reasoning evaporation pattern visible in Sempere's questions — models that explored the messy correction in extended thinking and then abandoned it — but has not been tested systematically. Verification would require base model comparison (do models without RLHF make the same selection errors?), cross-model replication, and ideally a connection to the existing literature on reasoning chain selection and weighting failures.
+
+### Caveats on the taxonomy
+
+This taxonomy was derived from qualitative analysis of 18 questions, not from a controlled experiment. The failure modes are real as we observed them in traces , but their prevalence, consistency across models, and sensitivity to prompting are open questions. We present them as an analytical framework for understanding where quantitative estimation breaks down, not as proven claims about model capabilities.
+
+---
+
+## Counterfactual Pair Framework
+
+To test whether models can propagate altered assumptions through their decompositions — rather than defaulting to parametric knowledge — we developed a counterfactual pair framework. Each pair consists of a baseline question and a counterfactual variant where one or more factual premises are changed. The model answers both independently. We measure propagation: did the model's answer shift by the amount the altered premise implies?
+
+We define a propagation score as `ln(observed_ratio) / ln(implied_ratio)`, where a score of 1.0 means the model propagated the change perfectly, scores below 1.0 indicate under-propagation (the model anchored on its prior), and scores above 1.0 indicate over-propagation.
+
+Control pairs where the counterfactual changes a number but not the structure of the problem validated cleanly at ~1.0 propagation across models. Models can multiply by a ratio. Single-conflict pairs (one premise changed) also mostly propagated correctly. The framework worked as designed: it measured what it intended to measure, and the scoring apparatus was reliable.
+
+But the pairs were too easy. Every pair we tested asked the model to scale a quantity linearly, and models are good at linear scaling. The failure modes identified in the trace analysis (Section: Failure Taxonomy) are structural — they involve regime shifts, missing loss factors, and causal misattribution, not incorrect multiplication. To test those failures, the counterfactual would need to cross a boundary where the decomposition structure itself changes, not just a number within it. We designed pairs targeting categorical boundary crossing and gross-vs-net failures, but did not complete the runs as verifying counterfactuals is pretty time intensive.
+
+The one interesting exception was a Norway heating-demand pair, where models consistently under-propagated a temperature change (propagation score 0.52–0.62). Initial analysis suggested prior resistance , **"Norway is cold"** fighting the counterfactual. Further investigation revealed the under-propagation was defensible physics: the relationship between temperature and heating degree-days is non-linear, and the model's adjustment was closer to correct than the spec's linear assumption.
+
+Constructing counterfactual pairs that test structural failure modes requires authoring two ground truths per pair: a baseline and a counterfactual , where the counterfactual ground truth accounts for the regime shift or non-linear effect the pair is designed to test. This is substantially harder than authoring single-question ground truths, because the author must reason through exactly the structural shift they expect the model to miss. The Norway experience demonstrated the risk: sloppy counterfactual specs create fake failures where the model is actually right and the benchmark is wrong. Getting this right requires careful domain-specific reasoning for each pair, and we chose to prioritize expanding the core question set over rushing counterfactual pairs that might not hold up to scrutiny.
+
+**Assessment.** The framework is a promising instrument for testing specific failure modes, particularly anchoring and regime-crossing. The bottleneck is the intellectual difficulty of authoring structurally interesting counterfactuals with verified ground truths. We intend to return to this in future work with a smaller number of carefully reasoned pairs rather than a large set of easy ones.
+
+---
+
+## Limitations
+
+This work has several limitations that should be considered when interpreting the results.
+
+The core benchmark results rest on 20 ground-truth-scored questions. Medians on samples of this size are noisy , with a single new question shifting a model's median score by 5–10%. The ranking among frontier models (gpt-5.1, Gemini 2.5 Pro, Sonnet 4.5) is directionally informative but should not be treated as a definitive ordering. The full question set is 43, but only 20 have verified ground truth distributions; the remaining 23 Sempere originals have author-estimated reference distributions that have not been independently verified.
+
+The v2 search arm is incomplete. Only gpt-5.1 has finished both search-on and search-off conditions. The finding that web search can hurt performance in certain format conditions is suggestive but rests on a single model.  The search-effect results should be read as a case study, not a general conclusion.
+
+All runs used a single seed. The scoring pipeline is deterministic given the same model output, but model outputs themselves have sampling variance. We have not bootstrapped confidence intervals or run multiple seeds per question. Results are reproducible but not robustness-checked.
+
+There is no formal human baseline. Informal comparison suggests frontier models are competitive with practiced Fermi estimators, but without a controlled human evaluation on the same questions with the same scoring, this remains only an impression.
+
+The failure taxonomy is derived from qualitative trace analysis of 18 questions, not from controlled experiments. We identified the failure modes by reading reasoning traces and categorizing errors. We have not measured their prevalence, consistency across models, or sensitivity to prompt variations. The meta-pattern hypothesis (that models select formally clean reasoning threads over practically accurate ones) is supported by traces but unverified.
+
+The question set targets 100 questions but currently stands at 43. The geographic and topical diversity we describe is present but thin, with some domains and regions are represented by a single question. The contamination resistance of the cross-referencing approach has not been formally tested (e.g., via membership inference or Min-K% probing on the composed quantities).
+
+---
+
+## Future Work
+
+**Expanding the question set.** The current 43 questions are targeting 100. Additional questions are being authored by collaborators using the same cross-referencing methodology and design principles. Priority areas include GCR-relevant domains (biosecurity, nuclear, AI governance), additional low-data-country coverage, physics, and questions specifically designed to trigger the failure modes identified in the taxonomy.
+
+**Human baseline.** A controlled evaluation where practiced Fermi estimators answer the same questions under the same conditions, scored with the same Cramér-log metric. This is necessary to make any claim about model-vs-human capability and to calibrate what "good" looks like on this benchmark.
+
+**Completing the search arm.** Running the search-on / search-off protocol across all models, not just gpt-5.1. The format-asymmetric search effect and the Honduras stale-priors result are currently single-model findings. Multi-model replication would determine whether these are general patterns or model-specific artifacts.
+
+**Systematic testing of the failure taxonomy.** The four failure modes were identified qualitatively. Designing questions with verified ground truths that reliably trigger each mode, would allow measuring failure prevalence per model and tracking whether new model generations resolve specific failure types. The counterfactual pair framework is one instrument for this; single structurally-trapped questions (in the style of Sempere's originals) may be better suited for some failure modes.
+
+**Base model comparison.** Testing whether base models exhibit the same reasoning evaporation pattern as instruction-tuned models. 
+
+**Contamination verification.** Formally testing whether the cross-referencing approach actually resists contamination, using methods like Min-K% membership inference (Shi et al., 2024) on the composed quantities versus their component statistics.
+
+**A fine-tuned estimation model.** The benchmark infrastructure -- questions, ground truths and scoring pipeline -- could double as training data for a specialized estimation model. Fine-tuning an open model to output Squiggle distributions, trained against Cramér-log directly, is a natural phase 2.
+
+---
+
+## References
+
+- Epstein, Z. et al. (2025). FermiEval: Evaluating LLMs on Fermi Problems with Confidence Intervals. arXiv:2510.26995.
+- Gneiting, T. & Raftery, A.E. (2007). Strictly Proper Scoring Rules, Prediction, and Estimation. *JASA* 102(477): 359–378.
+- Gooen, O. (2016). Lognormal vs. normal. *Guesstimate Blog.*
+- IPCC (2006). *Guidelines for National Greenhouse Gas Inventories*, Vol. 1, Ch. 3: Uncertainties.
+- Kalyan, A. et al. (2021). How Much Coffee Was Consumed During EMNLP 2019? Fermi Problems: A New Reasoning Challenge for AI. arXiv:2110.14207.
+- QURI Team (2024). Squiggle Language Documentation.
+- Sempere, N. (2022). Introduction to Fermi Estimates. *EA Forum.*
+- Sempere, N. (2024). Fermi CLI.
+- Shi, W. et al. (2024). Detecting Pretraining Data from Large Language Models. *ICLR 2024.*
+- Solazzo, E. et al. (2021). Uncertainties in the EDGAR emission inventory of greenhouse gases. *Atmos. Chem. Phys.* 21: 5655–5683.
+- Tversky, A. & Kahneman, D. (1974). Judgment under Uncertainty: Heuristics and Biases. *Science* 185(4157): 1124–1131.

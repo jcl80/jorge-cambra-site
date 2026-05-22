@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Evaluating LLM Quantitative Estimation Under Uncertainty',
+    description: 'A study on LLM quantitative estimation under uncertainty.',
+    link: '/blog/estimating-under-uncertainty',
+    uid: 'blog-estimating-under-uncertainty',
+  },
+  {
     title: 'FermiBench: Evaluating LLM Quantitative Reasoning with Distributional Fermi Estimation',
     description: 'A benchmark for how well frontier models decompose quantitative questions into factor-level distributions and compose them into calibrated estimates.',
     link: '/blog/fermibench',
