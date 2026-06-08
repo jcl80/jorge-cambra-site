@@ -123,6 +123,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Custos — Part 1',
+    description: 'Teaching a small encoder to mimic an LLM\'s triage decision ',
+    link: '/blog/custos-part-1',
+    uid: 'blog-custos-part-1',
+  },
+  {
     title: 'Evaluating LLM Quantitative Estimation Under Uncertainty',
     description: 'A study on LLM quantitative estimation under uncertainty.',
     link: '/blog/estimating-under-uncertainty',

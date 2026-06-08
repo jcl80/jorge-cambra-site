@@ -1,0 +1,74 @@
+<Cover
+  src="/images/pexels-tiago-antonio-530108832-28792576.jpg"
+  alt="Distilling an LLM triage filter into a small local model"
+  caption="Image via Pexels"
+/>
+
+# Teaching a small model some boundaries
+
+*First part of a potential series about making cheap and accessible big scale inference*
+
+##  *Teaching ModernBERT "is this worth a closer look?" for our specific pipeline*
+
+---
+
+
+
+## *First easy win:* <span className="text-base font-normal italic text-zinc-500 dark:text-zinc-400">filter the easy no's</span>
+
+
+Our monitoring pipeline runs a two-stage LLM funnel over a firehose of social posts: `gpt-5-mini` triages every post, and the ones it flags go to `gpt-5` for a verdict. 
+
+This is cool for an MVP, but also means a **paid API call on every single post**, and the overwhelming majority of those posts are obvious noise the mini model waves through in a fraction of a second. 
+
+If we could teach a **cheaper model** : "*mini would not flag this*" we can drop that post before mini ever runs, saving a big percentage of the calls.
+
+## The idea: distill the *flag*
+
+We trained the small model to reproduce **gpt-5-mini's Stage-1 flag**, forgetting (only for now) about gpt-5's final verdict.
+
+This makes the model a **verifier that sits *in front of* mini**: its only job is "would mini bother with this?" This makes our work simple, and forces an honest accounting. The labels are mini's own judgments, so what we can measure is **fidelity to mini**, not general correctness.
+
+## Data
+
+The training corpus is ~877k production-labeled posts. Two things we had to double check:
+
+- **Comments:** A huge share of flagged posts are only interpretable with the comment thread the model saw. Only **title+body** throws away signal. So the input is `title + body + the first comments mini saw`.
+- **Reposts:** The corpus is full of identical-text reposts and copypasta. A random train/test split leaks near-duplicates across the boundary and inflates your numbers. We split by **source + time + a text-hash**, so every group of identical text is assigned atomically to one side. 
+
+## Method
+
+LoRA fine-tune of **ModernBERT-large**. Freeze the 400M-param trunk, train ~7M adapter params (1.8%). Class-weighted loss for the imbalance, temperature-calibrated output, early stopping on validation PR-AUC. It trained in **about an hour on a single rented A100**, for a couple of dollars.
+
+## Results
+
+The question that mattered the most for us was:
+
+**How much volume can we safely drop?**
+
+So we measure the **drop band**: rank every held-out post by the model's score, pick a threshold that keeps *X%* of mini's flags above it, drop everything below, and measure what fell in the dropped tail.
+
+At a **99%-recall** operating point (keep 99% of mini's flags), we **dropped 59% of mini-call volume, missing 0.36% of mini's flags**, of which gpt-5 would have later confirmed 142 (0.44% of all confirmed threats), and only **2** of those high-severity.
+
+It's a dial, so you can do your own thing. Want to be paranoid? At a 99.9% recall target you still drop ~46%. Want to be aggressive? 95% recall drops ~70%. The operating point is yours.
+
+## *A second win? :* <span className="text-base font-normal italic text-zinc-500 dark:text-zinc-400">measure **magnitude**</span>
+
+
+The verifier has a ceiling though: mini flags a lot of low-grade stuff, so "reproduce mini" can only drop so much without missing things. 
+
+For that we prepared other lever:  **importance**
+
+So we trained a second small model: a regressor that predicts mini's **importance (1–10)**. It hits a rank correlation (Spearman) of **0.63**. It orders posts by magnitude in real agreement with mini. It *compresses at the top* (it's shy about predicting a 9), but for routing you only need the **ranking**, and that holds. 
+
+New possible lever: keep 95% of the genuinely-high-importance flagged posts and drop a *further* ~45% of the flagged volume. It's your decision. (we are still a bit shy about this one)
+
+## Objections
+
+Every number above is **fidelity to mini, not correctness.** "99% recall" means we keep 99% of the flags mini *recorded*. Threats mini itself missed leave no trace in this data, so **true recall is unmeasurable here.** Measuring it needs a separate, deliberate gold-labeling pass on a raw-stream sample.
+
+## So, was it worth it?
+
+For a first round, i'll take it. 50% of the triage calls gone if we decide so.
+
+What I like most, though, is that it forced us to look deep into our own infrastructure. With that new look we can shape  it better for the next iteration, and for more ambitious projects down the line.
