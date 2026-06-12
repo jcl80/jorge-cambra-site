@@ -74,7 +74,7 @@ export function Footer() {
           className="text-sm text-zinc-600 dark:text-zinc-400"
           interval={3}
         >
-          <span>© 2024 Jorge Cambra.</span>
+          <span>© 2026 Jorge Cambra.</span>
           <span>Built with Next.js and Motion-Primitives.</span>
         </TextLoop>
       </div>

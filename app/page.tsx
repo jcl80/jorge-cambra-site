@@ -39,6 +39,19 @@ const TRANSITION_SECTION = {
   duration: 0.3,
 }
 
+// Group projects by category, preserving the order they first appear in PROJECTS.
+const PROJECT_GROUPS = PROJECTS.reduce<
+  { category: string; projects: typeof PROJECTS }[]
+>((groups, project) => {
+  const group = groups.find((g) => g.category === project.category)
+  if (group) {
+    group.projects.push(project)
+  } else {
+    groups.push({ category: project.category, projects: [project] })
+  }
+  return groups
+}, [])
+
 type ProjectVideoProps = {
   src: string
 }
@@ -137,41 +150,69 @@ export default function Personal() {
       >
         <div className="flex-1">
           <p className="text-zinc-600 dark:text-zinc-400">
-            Full‑stack engineer and relentless problem‑solver fluent in TypeScript, Python,
-            and Solana Web3. I've shipped production‑grade e‑commerce and classifieds
-            platforms with secure checkout and admin dashboards, a live NBA Hot‑Streak
-            Tracker for stats junkies, and automated Solana trading bots with Telegram
-            alerts—serving thousands of users in real time.
+            Software engineer specializing in machine learning. Currently building evaluation and threat detection infrastructure for global catastrophic risk monitoring at{' '}
+            <a
+              className="underline dark:text-zinc-300"
+              href="https://sentinel-team.org/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Sentinel
+            </a>{' '}
+            (benchmarking, fine‑tuning, distillation, and data pipelines for large‑scale public‑source analysis).
+            Before this: full-stack engineering across marketplaces, payments, and internal
+            sales tooling.
           </p>
         </div>
       </motion.section>
 
-      <motion.section
+       <motion.section
         variants={VARIANTS_SECTION}
         transition={TRANSITION_SECTION}
       >
-        <h3 className="mb-5 text-lg font-medium">Selected Projects</h3>
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          {PROJECTS.map((project) => (
-            <div key={project.name} className="space-y-2">
-              <div className="relative rounded-2xl bg-zinc-50/40 p-1 ring-1 ring-zinc-200/50 ring-inset dark:bg-zinc-950/40 dark:ring-zinc-800/50">
-                <ProjectVideo src={project.video} />
-              </div>
-              <div className="px-1">
-                <a
-                  className="font-base group relative inline-block font-[450] text-zinc-900 dark:text-zinc-50"
-                  href={project.link}
-                  target="_blank"
-                >
-                  {project.name}
-                  <span className="absolute bottom-0.5 left-0 block h-[1px] w-full max-w-0 bg-zinc-900 transition-all duration-200 group-hover:max-w-full"></span>
-                </a>
-                <p className="text-base text-zinc-600 dark:text-zinc-400">
-                  {project.description}
-                </p>
-              </div>
-            </div>
-          ))}
+        <h3 className="mb-3 flex items-baseline justify-between text-lg font-medium">
+  <span>Blog</span>
+  <Link
+    href="/blog"
+    className="group inline-flex items-center rounded-md px-1 -mx-1 text-sm
+               text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/40"
+    aria-label="View all blog posts"
+  >
+    View all
+    <svg viewBox="0 0 15 15" className="ml-1 h-3 w-3 transition-transform group-hover:translate-x-0.5">
+      <path d="M3.65 11.35a.5.5 0 0 1 0-.7L10.29 4H6a.5.5 0 0 1 0-1h5.5a.5.5 0 0 1 .5.5V9a.5.5 0 0 1-1 0V4.71l-6.65 6.64a.5.5 0 0 1-.71 0z" fill="currentColor"/>
+    </svg>
+  </Link>
+</h3>
+        <div className="flex flex-col space-y-0">
+          <AnimatedBackground
+            enableHover
+            className="h-full w-full rounded-lg bg-zinc-100 dark:bg-zinc-900/80"
+            transition={{
+              type: 'spring',
+              bounce: 0,
+              duration: 0.2,
+            }}
+          >
+            {BLOG_POSTS.slice(0, 3).map((post) => (
+              <Link
+                key={post.uid}
+                className="-mx-3 rounded-xl px-3 py-3"
+                href={post.link}
+                data-id={post.uid}
+              >
+                <div className="flex flex-col space-y-1">
+                  <h4 className="font-normal dark:text-zinc-100">
+                    {post.title}
+                  </h4>
+                  <p className="text-zinc-500 dark:text-zinc-400">
+                    {post.description}
+                  </p>
+                </div>
+              </Link>
+            ))}
+          </AnimatedBackground>
         </div>
       </motion.section>
 
@@ -207,7 +248,7 @@ export default function Personal() {
                         </p>
                       </div>
                       <p className="text-zinc-600 dark:text-zinc-400">
-                        {job.start} - {job.end}
+                        {job.start === job.end ? job.start : `${job.start} - ${job.end}`}
                       </p>
                     </div>
                   </div>
@@ -277,56 +318,58 @@ export default function Personal() {
         </div>
       </motion.section>
 
-      <motion.section
+             <motion.section
         variants={VARIANTS_SECTION}
         transition={TRANSITION_SECTION}
       >
-        <h3 className="mb-3 flex items-baseline justify-between text-lg font-medium">
-  <span>Blog</span>
-  <Link
-    href="/blog"
-    className="group inline-flex items-center rounded-md px-1 -mx-1 text-sm
-               text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100
-               focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/40"
-    aria-label="View all blog posts"
-  >
-    View all
-    <svg viewBox="0 0 15 15" className="ml-1 h-3 w-3 transition-transform group-hover:translate-x-0.5">
-      <path d="M3.65 11.35a.5.5 0 0 1 0-.7L10.29 4H6a.5.5 0 0 1 0-1h5.5a.5.5 0 0 1 .5.5V9a.5.5 0 0 1-1 0V4.71l-6.65 6.64a.5.5 0 0 1-.71 0z" fill="currentColor"/>
-    </svg>
-  </Link>
-</h3>
-        <div className="flex flex-col space-y-0">
-          <AnimatedBackground
-            enableHover
-            className="h-full w-full rounded-lg bg-zinc-100 dark:bg-zinc-900/80"
-            transition={{
-              type: 'spring',
-              bounce: 0,
-              duration: 0.2,
-            }}
-          >
-            {BLOG_POSTS.slice(0, 3).map((post) => (
-              <Link
-                key={post.uid}
-                className="-mx-3 rounded-xl px-3 py-3"
-                href={post.link}
-                data-id={post.uid}
-              >
-                <div className="flex flex-col space-y-1">
-                  <h4 className="font-normal dark:text-zinc-100">
-                    {post.title}
-                  </h4>
-                  <p className="text-zinc-500 dark:text-zinc-400">
-                    {post.description}
-                  </p>
-                </div>
-              </Link>
-            ))}
-          </AnimatedBackground>
+        <h3 className="mb-5 text-lg font-medium">Selected Projects</h3>
+        <div className="flex flex-col">
+          {PROJECT_GROUPS.map((group, groupIndex) => (
+            <div key={group.category}>
+              {groupIndex > 0 && (
+                <div className="my-8 border-t border-zinc-200 dark:border-zinc-800" />
+              )}
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                {group.projects.map((project) => (
+                  <div key={project.name} className="space-y-2">
+                    <div className="relative rounded-2xl bg-zinc-50/40 p-1 ring-1 ring-zinc-200/50 ring-inset dark:bg-zinc-950/40 dark:ring-zinc-800/50">
+                      <ProjectVideo src={project.video} />
+                    </div>
+                    <div className="px-1">
+                      <a
+                        className="font-base group relative inline-block font-[450] text-zinc-900 dark:text-zinc-50"
+                        href={project.link}
+                        target="_blank"
+                      >
+                        {project.name}
+                        <span className="absolute bottom-0.5 left-0 block h-[1px] w-full max-w-0 bg-zinc-900 transition-all duration-200 group-hover:max-w-full"></span>
+                      </a>
+                      <p className="text-base text-zinc-600 dark:text-zinc-400">
+                        {project.description}
+                        {project.secondaryLink && (
+                          <>
+                            {' '}
+                            <a
+                              className="underline dark:text-zinc-300"
+                              href={project.secondaryLink.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {project.secondaryLink.label}
+                            </a>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </motion.section>
 
+     
       <motion.section
         variants={VARIANTS_SECTION}
         transition={TRANSITION_SECTION}

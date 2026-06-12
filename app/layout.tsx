@@ -13,39 +13,44 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: 'Jorge Cambra - Software Engineer',
+  title: 'Cambra - Software Engineer, Machine Learning',
   description:
-    'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+  'Software engineer specializing in machine learning. Building evaluation and threat detection infrastructure for global catastrophic risk monitoring at Sentinel.',
+
   keywords: [
     'Software Engineer',
-    'TypeScript',
+    'Machine Learning',
+    'LLM Evaluation',
+    'Benchmarking',
+    'Fine-tuning',
+    'Knowledge Distillation',
+    'Threat Detection',
     'Python',
-    'Solana',
-    'Web3',
-    'E-commerce',
-    'Real-time Applications',
-    'Blockchain Development',
+    'JavaScript',
+    "Next.js",
+    "Express",
+    "Golang",
   ],
   icons: {
-    icon: '/images/jcl80.png',
-    shortcut: '/images/jcl80.png',
-    apple: '/images/jcl80.png',
+    icon: '/images/fox-icon.png',
+    shortcut: '/images/fox-icon.png',
+    apple: '/images/fox-icon-180.png',
     other: {
       rel: 'apple-touch-icon-precomposed',
-      url: '/images/jcl80.png',
+      url: '/images/fox-icon-180.png',
     },
   },
   openGraph: {
-    title: 'Jorge Cambra - Software Engineer',
+    title: 'Jorge Cambra - Software Engineer, Machine Learning',
     description:
-      'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
+      'Software engineer specializing in machine learning. Currently building evaluation and threat detection infrastructure for global catastrophic risk monitoring at Sentinel.',
     url: 'https://jorgecambra.com',
     siteName: 'Jorge Cambra',
     images: [
       {
-        url: '/images/jcl80.png',
-        width: 800,
-        height: 600,
+        url: '/images/fox-icon-og.png',
+        width: 1024,
+        height: 1024,
         alt: 'Jorge Cambra',
       },
     ],
@@ -54,10 +59,10 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Jorge Cambra - Software Engineer',
+    title: 'Jorge Cambra - Software Engineer, Machine Learning',
     description:
-      'Software engineer and relentless problem-solver fluent in TypeScript, Python, and Solana Web3. Specializing in e-commerce, real-time applications, and blockchain development.',
-    images: ['/images/jcl80.png'],
+      'Software engineer specializing in machine learning. Currently building evaluation and threat detection infrastructure for global catastrophic risk monitoring at Sentinel.',
+    images: ['/images/fox-icon-og.png'],
   },
 }
 

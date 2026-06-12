@@ -4,6 +4,11 @@ type Project = {
   link: string
   video: string
   id: string
+  category: string
+  secondaryLink?: {
+    label: string
+    url: string
+  }
 }
 
 type WorkExperience = {
@@ -30,34 +35,73 @@ type SocialLink = {
 
 export const PROJECTS: Project[] = [
   {
-    name: 'NBA Hot-Streak Tracker',
-    description: 'Live NBA analytics tool for tracking player hot streaks and performance metrics.',
-    link: 'https://hotstreak.jcl80.com/',
-    video: '/videos/HotStreak_compressed.mp4',
-    id: 'project1',
+    name: 'FermiBench',
+    description: 'A benchmark for evaluating how good frontier LLMs are at estimating quantities they don\'t know.',
+    link: 'https://sentinel-fermi-bench.vercel.app/',
+    video: '/videos/fermibench_demo.mp4',
+    id: 'project-fermibench',
+    category: 'AI & Evaluation',
+  },
+  {
+    name: 'Reddit Threat Intelligence',
+    description: 'Threat detection system for Sentinel that ingests, triages, scores and clusters public Reddit signals for global catastrophic risk monitoring.',
+    link: 'https://reddit.sentinel-team.org/',
+    video: '/videos/sentinel_triage_demo.mp4',
+    id: 'project-triage',
+    category: 'AI & Evaluation',
   },
   {
     name: 'Trato Hecho PY',
-    description: 'Production-grade classified ads  and marketplace platform with multi-store support, secure checkout, and comprehensive analytics.',
+    description: 'Classified ads and marketplace platform intended to be the Paraguayan equivalent of Craigslist. More than 100k users.',
     link: 'https://tratohecho.com.py/',
     video: '/videos/prueba_portfolio_trimmed.mp4',
     id: 'project2',
+    category: 'E-commerce & Marketplaces',
   },
   {
     name: 'Tienda Paraguaya',
-    description: 'A fast, localized e-commerce brand for Paraguay, built on top of MedusaJS, integrated with Bancard checkout and PostHog analytics.',
+    description: 'My own attempt at breaking into the e-commerce market in Paraguay.',
     link: 'https://tiendaparaguaya.com/py',
     video: '/videos/tienda_paraguaya_quick_demo.webm',
     id: 'project3',
+    category: 'E-commerce & Marketplaces',
+  },
+  {
+    name: 'NBA Hot-Streak Tracker',
+    description: 'NBA analytics tool for tracking player hot streaks and performance metrics. Driven by a passion for basketball and its advanced stats community.',
+    link: 'https://hotstreak.jcl80.com/',
+    video: '/videos/HotStreak_compressed.mp4',
+    id: 'project1',
+    category: 'Sports Analytics',
+    secondaryLink: {
+      label: 'r/NBAanalytics discussion',
+      url: 'https://www.reddit.com/r/NBAanalytics/comments/1kj678m',
+    },
   },
 ]
 
 export const WORK_EXPERIENCE: WorkExperience[] = [
   {
+    company: 'Sentinel',
+    title: 'Software Engineer, Machine Learning',
+    start: '2025',        
+    end: 'Present',
+    link: 'https://sentinel-team.org/',
+    id: 'work-sentinel',
+    technologies: [
+      'Python',
+      'Hugging Face Transformers',
+      'ModernBERT',
+      'DeBERTa',
+      'Go',
+      'Docker',
+    ],
+  },
+  {
     company: 'Trato Hecho',
     title: 'Full Stack Engineer',
     start: '2023',
-    end: 'Present',
+    end: '2025',
     link: 'https://tratohecho.com.py',
     id: 'work1',
     technologies: [
