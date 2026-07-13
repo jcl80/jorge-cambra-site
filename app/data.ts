@@ -167,6 +167,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Some tricks to detect contamination while building a benchmark',
+    description: 'Triangulating training-data contamination in an estimation benchmark with corpus frequency, attestation, and logprob commitment.',
+    link: '/blog/detecting-contamination-benchmark',
+    uid: 'blog-detecting-contamination-benchmark',
+  },
+  {
     title: 'Custos — Part 1',
     description: 'Teaching a small encoder to mimic an LLM\'s triage decision ',
     link: '/blog/custos-part-1',

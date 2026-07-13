@@ -1,0 +1,158 @@
+# Some tricks to detect contamination while building a benchmark
+
+*Heads up: this is a rough, AI-generated write-up. It's unpolished, but it might still be useful to read.*
+
+## The problem
+
+A good estimation benchmark tests whether a model can *reason its way* to a
+number — decompose "how many piano tuners in Chicago?" into
+population × piano-ownership × tuning-frequency and multiply it out. A bad
+question has an answer the model simply *memorised* from its training data, so it
+recites instead of reasoning. That's contamination, and for estimation questions
+it's insidious: the model looks brilliant, but you've measured recall, not the
+skill you meant to test.
+
+The catch: you can't inspect the training data of GPT-5, Claude, or Gemini — it's
+secret. You can't grep for your question. So you need *proxies* for "would a model
+already know this?" Here are the ones that worked for us, and the ones that fooled
+us.
+
+## Trick 1 — Use an open corpus as a stand-in for training data
+
+You can't see a frontier model's corpus, but you can see *an* open one.
+[infini-gram](https://infini-gram.io) (Liu et al. 2024) is a search engine over
+trillion-token pretraining corpora; we query the OLMo-2 index (~4.6T tokens). It
+answers two questions instantly: *how often does this n-gram appear*, and *show me
+the documents*.
+
+Frequency is the first proxy. Recall scales with how often a fact appears in
+pretraining (Kandpal et al. 2023), so a **frequent entity is one models likely
+hold memorised facts about**. "Mount Everest" appears millions of times; an
+obscure regional statistic appears rarely. The famous one is a recall risk; the
+obscure one forces estimation.
+
+**Caveat:** it's a *stand-in*. The frontier model's real corpus is secret and
+larger; OLMo-2 frequency is a measurable proxy, not ground truth. Treat a low
+count as "no evidence of recall," never a confident "safe."
+
+## Trick 2 — Frequency isn't recall: check if the *answer* is written down
+
+Here's the trap. "LeBron James" is one of the most frequent entities in any
+corpus. But the question *"sum the ages of every opposing player LeBron shared a
+court with"* has an answer that is **nowhere written down** — it's a computation.
+Entity-frequency screams "recall risk!" and it's wrong.
+
+The sharper signal is **attestation**: is the specific answer stated *next to* the
+subject? Not "does 8,849 appear somewhere near Everest" (numbers land near famous
+things by chance constantly) — but "is there a document that says *Everest is
+8,849 metres*?"
+
+We build this as a CNF query — `(entity) AND (subject) AND (value)` — and keep
+only documents where all the terms cluster within a few hundred characters:
+*stated together*, not coincidentally co-occurring. The subject clause does the
+disambiguating work. It's the difference between finding *"Argentina's GDP is
+8,000 bn"* (a value near the entity, wrong fact) and *"Argentina has 8,000
+pharmacies"* (the fact you're actually checking).
+
+Two hard-won gotchas:
+
+- **You need a specific anchor.** ANDing only common words — `LeBron AND points
+  AND game` — returns a *subsampled* count: the engine samples ultra-frequent
+  terms for speed, and the intersection of the samples comes back zero. That zero
+  means **unknown**, not absent. Keep at least one rare term (a number, a name) in
+  the query and it works.
+- **Proximity scales with term count.** Two terms stating a fact sit tight
+  ("Everest is 8,849 m"); three or four terms naturally spread further across a
+  sentence. A fixed gap threshold filters real co-occurrences to zero — scale it
+  with the number of terms.
+
+## Trick 3 — Ask the model to commit, then watch the logprobs
+
+Corpus signals are about the *world*. This one is about the *model*. When a model
+writes a number, read the probability distribution over the token it emitted. If
+it piles ~all its probability on one value, it's **committing** — it "knows" the
+answer. If it spreads across many candidates, it's genuinely **estimating**.
+
+We decompose the question, and at the moment the model writes each factor's first
+significant digit, we read `dom_p` — the mass on the single most-likely value.
+High = locked on. Low = hedging.
+
+And here's the confound that cost us a day: **round numbers**. A confident "0.5" or
+"100" commits *exactly as hard* as a recalled fact — high `dom_p` — but it's a
+guess, not a memory. So high commitment alone can't prove recall.
+
+The fix is the discriminator that makes the whole thing work:
+
+> **Confident + PRECISE (non-round) = the recall tell.**
+> Confident + round = just an anchor.
+
+A model that writes `8,849` with total certainty memorised it. A model that writes
+`100` with total certainty is anchoring. Round numbers are what estimation *looks*
+like; precise numbers are what memory looks like.
+
+## Trick 4 — No single signal is enough: trisect
+
+None of the above is trustworthy alone. Frequency over-warns (LeBron). Commitment
+is confounded (round numbers). Attestation needs a specific answer to exist in the
+first place. So combine them — the trisection:
+
+| Written down? | Commits? | Round? | Verdict |
+|---|---|---|---|
+| yes | yes | no  | **RECALL** — likely contaminated / too easy |
+| no  | yes | yes | **ANCHOR** — a confident guess, not recall (fine) |
+| no  | no  | —   | **ESTIMATION** — the good case |
+
+The magic is in how the signals cover each other's blind spots. Commitment can't
+tell recall from a round guess — corpus frequency can. Frequency can't tell a
+famous entity from a memorised answer — attestation can. Each trick is weak; the
+conjunction is strong.
+
+## Trick 5 — Probe a *reasoning* model, and toggle its thinking
+
+Most frontier reasoners don't expose logprobs at all — which is why Trick 3 was
+historically stuck on older, non-reasoning models. But some providers do: DeepSeek
+V4 via Fireworks returns token probabilities even for a full chain-of-thought
+reasoner. That lets you watch a *reasoning* model commit, which is far more
+interesting than probing a weaker instrument.
+
+Two things fall out:
+
+- **Compare thinking on vs off.** With thinking off, models often state recall out
+  loud — *"I recall it's around 2.7 million."* That sentence is a contamination
+  flag in plain English.
+- **Thinking mode ignores temperature.** So the trace is non-deterministic —
+  re-running the same question shifts the numbers. Each trace is one sample of one
+  reasoning path, not a reproducible measurement. Read it as a snapshot.
+
+(A subtle engineering trap worth flagging: reasoning models strip the chain of
+thought from the response *body* but keep every token in the *logprobs* stream, so
+the two don't line up. Align your per-factor readings on the token stream, not the
+message text, or they land on the wrong words.)
+
+## The meta-trick — prefer boring, grounded tools
+
+Two lessons that generalise beyond this project:
+
+- **Classical beats an LLM for extraction.** To pull the entity and subject out of
+  a question, we reached for an LLM first — then realised a plain NER tagger is
+  better: grounded, offline, free, and it *can't hallucinate an entity that isn't
+  there*. The one thing NER can't do — aliases and translations — a knowledge base
+  (Wikidata) does better than an LLM anyway, because it can't make them up.
+- **Ship the uncertainty.** Every signal here is uncalibrated. The right move isn't
+  to hide that behind a confident score — it's to surface the raw counts, the
+  round-number flag, the "subsampled — unknown" warning — and let a human read
+  them. The tool guides the eye; it doesn't gate.
+
+## Closing
+
+None of these tricks is a contamination *detector* in the green-light / red-light
+sense. They're a **triage**: cheap, fast reads that tell a benchmark author *which
+questions to look at harder*. A question whose answer is frequent, attested, and
+precisely committed-to is one to rewrite. A question where the model hedges across
+diffuse values with nothing written down is one to keep — that's the estimation
+you were trying to test in the first place.
+
+The through-line: you can't see the training data, so you triangulate. Corpus
+frequency, corpus attestation, and logprob commitment each see a different shadow
+of the same object. Put them together and the shape of contamination comes
+through.
