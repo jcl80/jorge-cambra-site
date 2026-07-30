@@ -20,3 +20,8 @@
   }
 }
 
+.footnote-marker::before {
+  counter-increment: footnote;
+  content: '[' counter(footnote) ']';
+}
+

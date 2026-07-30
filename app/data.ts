@@ -167,6 +167,12 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 
 export const BLOG_POSTS: BlogPost[] = [
   {
+    title: 'Introducing FermiBench',
+    description: 'A rewritten and expanded look at how well frontier LLMs estimate quantities they don\'t know.',
+    link: '/blog/introducing-fermi-bench',
+    uid: 'blog-introducing-fermi-bench',
+  },
+  {
     title: 'Some tricks to detect contamination while building a benchmark',
     description: 'Triangulating training-data contamination in an estimation benchmark with corpus frequency, attestation, and logprob commitment.',
     link: '/blog/detecting-contamination-benchmark',
