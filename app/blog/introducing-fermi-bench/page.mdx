@@ -35,8 +35,6 @@ We deliberately keep the available DSL surface small: to(), arithmetic, variable
 
 A question is only worth including if a careful estimator and a lazy one produce visibly different answers. If both land somewhere in the same range, the question discriminates nothing, however hard it looks. In practice that means the question has to contain a trap: a load-bearing step where the obvious move is the wrong one. We design for this deliberately, but by eye. We can tell whether a candidate has a trap, and we have no procedure for producing one.
 
-A trap is not a gotcha. The chains that fail below contain no arithmetic errors and no absurd assumptions; they are what a reasonable estimator would write. The trap is what makes the question measure estimation rather than recall or luck, and a question without one measures neither.
-
 Pinning ground truth is the harder problem, and the one where a reader should be most sceptical. It is also not a separate problem. The kind of truth we can pin determines the kind of trap available: a figure that can go stale invites a model to recall a stale one; a cohort statistic we can query but nobody publishes has a salient wrong anchor sitting next to it. Three kinds of ground truth appear in the bank, and rather than list them, we'll take one question of each and follow it through — how we fixed its answer, and what it costs a model that goes at it naively.
 
 ### A published figure
