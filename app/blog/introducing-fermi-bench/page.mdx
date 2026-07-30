@@ -10,7 +10,7 @@ Two distinct capabilities are in play. One is estimation: is the answer in the r
 
 Measuring the second requires the model to say more than a number. If it gives a point estimate, there is no uncertainty to check. So FermiBench asks for a distribution, and scores it with a rule that rewards honest belief rather than strategic hedging.
 
-Scoring a distribution means having something honest to score it against, and rewarding calibration rather than hedging means the scoring rule itself has to be chosen carefully, not just written down. Pinning that ground truth and picking that rule are where most of the design effort went, and where a reader should look hardest for cracks — so that's where we start.
+Scoring a distribution means having something honest to score it against, and rewarding calibration rather than hedging means the scoring rule itself has to be chosen carefully, not just written down. Pinning that ground truth and picking that rule are where most of the design effort went, and where a reader should look hardest for cracks. First, though, what we actually ask a model for.
 
 ---
 
@@ -25,45 +25,75 @@ germany_m2 = 357022e6
 coal_kwh / solar_yield / germany_m2
 ```
 
-We evaluate the program, sample the resulting distribution, and score the samples. The model's answer is therefore a full distribution rather than an interval; the p5/p50/p95 triple is how we summarise it, not how we score it.
+We evaluate the program, sample the resulting distribution, and score the samples. The model's answer is therefore a full distribution rather than an interval; the p5/p50/p95 triple is how we summarise it.
 
 We deliberately keep the available DSL surface small: to(), arithmetic, variables, comments. No mixtures, no named distribution families, no beta. A larger surface would let format fluency contaminate the measurement, and we would rather score estimation than Squiggle.
 
 ---
 
-## Ground truth
+## Question building & ground truth
 
-Pinning ground truth is the hardest part of building this benchmark, and it's where a reader should be most sceptical. Three kinds appear in the bank, with different reliability. Lets see some examples:
+A question is only worth including if a careful estimator and a lazy one produce visibly different answers. If both land somewhere in the same range, the question discriminates nothing, however hard it looks. In practice that means the question has to contain a trap: a load-bearing step where the obvious move is the wrong one. We design for this deliberately, but by eye. We can tell whether a candidate has a trap, and we have no procedure for producing one.
 
-From the following question: 
+A trap is not a gotcha. The chains that fail below contain no arithmetic errors and no absurd assumptions; they are what a reasonable estimator would write. The trap is what makes the question measure estimation rather than recall or luck, and a question without one measures neither.
+
+Pinning ground truth is the harder problem, and the one where a reader should be most sceptical. It is also not a separate problem. The kind of truth we can pin determines the kind of trap available: a figure that can go stale invites a model to recall a stale one; a cohort statistic we can query but nobody publishes has a salient wrong anchor sitting next to it. Three kinds of ground truth appear in the bank, and rather than list them, we'll take one question of each and follow it through — how we fixed its answer, and what it costs a model that goes at it naively.
+
+### A published figure
 
 > **Surveyed length of underwater passages in Sistema Ox Bel Ha, the world's longest underwater cave, as of Feb 2026 (km)**
 
-**A published figure.** Ox Bel Ha's surveyed length is 541.7 km because a survey says so. Here we inherit whatever error the source carries, and the main risk is staleness rather than noise — which is why the question is dated as of Feb 2026 and why the provenance is pinned to a specific publication rather than to "the current figure." Also point truths.
+Ox Bel Ha's surveyed length is 541.7 km because a survey says so. Here we inherit whatever error the source carries, and the main risk is staleness rather than noise — which is why the question is dated as of Feb 2026 and why the provenance is pinned to a specific publication rather than to "the current figure." This resolves as a point truth: a single number, no distribution.
 
-**Computed from an authoritative dataset.** The median total assets of state-chartered banks filing a 10-K is not an estimate — it's a query. We pull the filings, filter the cohort, take the median. The uncertainty is definitional rather than statistical: what counts as state-chartered, which quarter, whether amended filings are included. We pin the dataset version and record the query, so the number is reproducible even if the source updates. These resolve as point truths.
+claude-opus-4.8 failed twice over. It started from a length of 240 to 290 km — the figure that circulated nearly a decade ago — and then added only a few kilometres of growth, for a system that is continuously surveyed. It landed at 275 km against an actual 541.7. Worse, it declared an interval of 249 to 307 km: high confidence in a band that does not contain the answer. gpt-5.6-sol used an updated baseline and came close.
 
-**A hand-authored decomposition.** For quantities nobody publishes directly, we build the answer the same way we ask the model to: factors, each with a distribution, composed in Squiggle. These resolve as distributions, and they're the ones that need justification. Each decomposition is evaluated by Monte Carlo to a 90% credible interval, to which the harness fits a lognormal and from which it resamples. The refit is exact for products and quotients of lognormal factors — the dominant composition in this corpus — and mildly lossy otherwise. Write G for the reference distribution so obtained, in log space.
+The trap is staleness. The most memorable figure for this quantity is a decade out of date, and the quantity itself grows continuously, so recall is not merely unhelpful — it is actively misleading. The benchmark does not only penalise not knowing. It penalises not knowing that you don't know.
 
-What G represents is the pivot of the design. It is not an approximation of the truth to be improved upon but the truth as the benchmark defines it, in scale as much as in location: its dispersion is the uncertainty the available evidence leaves standing, not the author's hesitancy. A model is therefore not entitled to be more certain than the reference. An F narrower than G asserts a precision that nothing supports, and asserts it whether or not its centre is well placed; a well-centred narrow answer is not a better one, only a less calibrated one. This is the standard against which the three surviving scoring rules were judged.
+### A dataset query
 
-Every factor is modelled as a **lognormal.** It's the natural choice for strictly positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are lognormal, so a decomposition chain stays in-family rather than requiring numerical convolution at each step. It's also the convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022) and the default in Squiggle's to(lo, hi) idiom, which means ground truth and model output share one representation.
+> **Among all state-chartered commercial banks that filed a 10-K with the SEC in Q1 2024, what was the median value of their total assets?**
 
-We inherited this convention rather than deriving it. We haven't tested normal-in-log-space against alternatives, or 90% bands against 80% or 95%. It's standard and defensible; it wasn't chosen over competitors in an experiment.
+The appeal of composing questions from public tabular data is obvious. FAOSTAT, OWID, UNODC, BLS, NHANES and the rest give you verifiable ground truth for free, at volume, with provenance you can pin. We adapted Open Estimate's approach of cross-referencing these sources: the individual statistics may sit in training data, but a composed ratio across two of them does not, so a model has to compute rather than recall.
+
+The median total assets of state-chartered banks filing a 10-K is not an estimate for us, but a query. We pull the filings, filter the cohort, take the median. The uncertainty is definitional rather than statistical: what counts as state-chartered, which quarter, whether amended filings are included. We pin the dataset version and record the query, so the number is reproducible even if the source updates. These also resolve as point truths.
+
+Here the error is **claude-opus-4.8's**, and it consists in hanging the calculation off the wrong quantity. It estimated how much the smallest bank capable of filing a 10-K would hold, and assumed the median would sit a few times above that floor — giving $1.3 billion against an actual $5.2 billion.
+
+The minimum of a distribution does not fix the scale of its centre, least of all in a cohort where the entities that report sit well above the legal threshold. gpt-5.6-sol anchored on operational size instead — branches, deposits per branch, the ratio of assets to deposits — and came close. Neither chain contains an arithmetic error. They diverge because they hang from different quantities.
+
+The trap is that the question offers an obvious anchor which is the wrong one. A filing threshold is salient, retrievable, and irrelevant to the median.
+
+### A hand-authored decomposition
+
+> **During a rainy day in California, how many raindrops fall on an umbrella?**
+
+For quantities nobody publishes directly, we build the answer the same way we ask the model to: factors, each with a distribution, composed in Squiggle. These resolve as distributions, and they're the ones that need justification. Each decomposition is evaluated by Monte Carlo to a 90% credible interval, to which the harness fits a lognormal and from which it resamples. The refit is exact for products and quotients of lognormal factors — the dominant composition in this corpus — and mildly lossy otherwise. Write G for the reference distribution so obtained, in log space.
+
+The rule we score with forgives width that covers the truth — a wide honest interval is barely penalised next to a narrow one, which is propriety working as intended (§Scoring methodology). So what a question has to punish is width a careful setup wouldn't have produced.
+
+Both models put the centre in the right place: 1.51 million drops for gpt-5.6-sol, 1.68 million for claude-opus-4.8, against a reference of 1.58 million. gpt-5.6-sol still takes the larger penalty.
+
+What costs it is width, and the width comes directly from how it set the problem up. Rather than anchoring on accumulated rainfall for the day, it decomposed into intensity × time under the rain — 0.7 to 15 mm/h over 0.15 to 2 hours. Multiplying two uncertain factors leaves implied rainfall anywhere from 0.24 to 13 mm, a range of 56×, when "a rainy day" bounds accumulation considerably better than that. It then estimated drops per litre by eye at 300 thousand to 5 million, when geometry fixes that quantity: a drop of 1.5 to 2.5 mm diameter gives 122 to 565 thousand. Its final interval spans a factor of 144 between endpoints, against 12 for the reference.
+
+The trap here is knowing when to stop. Decomposition is the default good move, and this question punishes it: the aggregate was better bounded than its factors, and guessing at a quantity that the cube of a diameter determines multiplies uncertainty without improving the answer.
+
+The width of G is a claim, not a hedge: it is the uncertainty the available evidence leaves standing, and we author it as tightly as the sources allow rather than padding it for safety.
 
 ---
+
+
 
 ## Scoring methodology
 
 The objectives of the benchmark constrained the choice of rule more tightly than is usual. Calibration is unobservable in a point estimate, so the rule had to score a full distribution. Honesty had to be optimal rather than merely virtuous, so the rule had to be proper with respect to whatever target we adopted. The quantities span several orders of magnitude, so it had to act on log-transformed samples, under which multiplicative error is symmetric. The bank holds on the order of a hundred questions, so its influence had to be bounded, no single item carrying the ranking. And the failure we most wanted to expose is a model claiming more precision than its evidence affords, so the rule had to score claimed precision against warranted precision — which is possible only where the target carries a scale and not merely a location.
 
-Four of the rules in common use fail one of these outright. fp_score (Kalyan et al., 2021), the established metric of the Fermi literature, compares a number against a number and is silent on everything but location. Brier is defined on discrete outcomes. The logarithmic score is strictly proper and local, and remains the reference standard in probabilistic forecasting (Gneiting & Raftery, 2007), but it is unbounded below: a single near-zero density at the realised value would dominate any aggregate over a bank this size. The Winkler interval score, which underlies the interval calibration of FermiEval (2025), is proper and unusually robust, but retains only two quantiles of the forecast. Wasserstein-1 met every requirement and is taken up below. Three rules survived the screen and were evaluated in full: CRPS-log, KL-log and Cramér-log.
+Four of the rules in common use fail one of these outright. fp_score (Kalyan et al., 2021), the established metric of the Fermi literature, compares a number against a number and is silent on everything but location. Brier is defined on discrete outcomes. The logarithmic score is strictly proper and local, and remains the reference standard in probabilistic forecasting (Gneiting & Raftery, 2007), but it is unbounded below: a single near-zero density at the realised value would dominate any aggregate over a bank this size. The Winkler interval score, which underlies the interval calibration of FermiEval (2025), is proper and unusually robust, but retains only two quantiles of the forecast. Wasserstein-1 met every requirement and is taken up below. Four rules survived the screen: CRPS-log, KL-log, Cramér-log, and Wasserstein-1. The first three are set out below; Wasserstein-1 differs from Cramér-log only in norm and is taken up with it.
 
-G is the reference described above, in log space; F is the model's distribution, likewise in log space.
+**G** is the reference distribution built above, in log space; **F** is the model's, likewise. What G represents is the pivot of the design. It is not an approximation of the truth to be improved upon but the truth as the benchmark defines it, in scale as much as in location. A model is therefore not entitled to be more certain than the reference: an F narrower than G asserts a precision that nothing supports, and asserts it whether or not its centre is well placed. A well-centred narrow answer is not a better one, only a less calibrated one. This is the standard against which the four surviving rules were judged.
 
 ### Candidates
 
-They differ less in their formulas than in the object each compares against, and it is that difference which decides them. With X, X′ independent draws from F and x the median of G:
+The formulas matter less than what each compares against: CRPS scores F against a single number, KL and Cramér against the whole of G. That difference decides them. With X, X′ independent draws from F and x the median of G:
 
 **CRPS-log** (Gneiting & Raftery, 2007, §4.2), in its sample energy form,
 
@@ -93,79 +123,39 @@ KL-log fails for the converse reason. It addresses the same requirement, and wit
 
 Wasserstein-1 was the one substitutable alternative, differing from Cramér-log only in norm. The L¹ functional is more robust to outliers and reads directly in the units of the variable; we preferred the L² for its sharper response to large discrepancies between F and G, and for the exact reduction to CRPS.
 
----
+G is a genuine distribution for the 45 questions with authored decompositions and a point mass for the other 64, and on that majority Cramér-log reduces exactly to CRPS-log.
 
-## Question building
-
-The appeal of composing questions from public tabular data is obvious. FAOSTAT, OWID, UNODC, BLS, NHANES and the rest give you verifiable ground truth for free, at volume, with provenance you can pin. We adapted Open Estimate's approach of cross-referencing these sources: the individual statistics may sit in training data, but a composed ratio across two of them does not, so a model has to compute rather than recall.
-
-This works, but only when the quantity we ask for lands far from the obvious starting point. The scoring rule forgives width that covers the truth, so a wide honest interval is barely penalised compared to a narrow one, which is the propriety property working as intended. The consequence for question design is that a question is only worth including if a careful estimator and a lazy one produce visibly different distributions. If both land somewhere inside the same range, the question discriminates nothing, however hard it looks.
-
-We call the thing that produces that separation the knife: a load-bearing factor where the naive approach predictably fails.
-
-The thing with a knife is that it is easier to recognise than to specify. So, let's review some questions with different failure modes to illustrate them:
-
-> **During a rainy day in California, how many raindrops fall on an umbrella?**
-
-Both models put the centre in the right place: 1.51 million drops for gpt-5.6-sol, 1.68 million for claude-opus-4.8, against a reference of 1.58 million. gpt-5.6-sol still takes the larger penalty.
-
-What costs it is width, and the width comes directly from how it set the problem up. Rather than anchoring on accumulated rainfall for the day, it decomposed into intensity × time under the rain — 0.7 to 15 mm/h over 0.15 to 2 hours. Multiplying two uncertain factors leaves implied rainfall anywhere from 0.24 to 13 mm, a range of 56×, when "a rainy day" bounds accumulation considerably better than that. It then estimated drops per litre by eye at 300 thousand to 5 million, when geometry fixes that quantity: a drop of 1.5 to 2.5 mm diameter gives 122 to 565 thousand. Its final interval spans a factor of 144 between endpoints, against 12 for the reference.
-
-The knife here is knowing when to stop. Decomposition is the default good move, and this question punishes it: the aggregate was better bounded than its factors, and guessing at a quantity that the cube of a diameter determines multiplies uncertainty without improving the answer.
-
-> **Among all state-chartered commercial banks that filed a 10-K with the SEC in Q1 2024, what was the median value of their total assets?**
-
-Here the error is claude-opus-4.8's, and it consists in hanging the calculation off the wrong quantity. It estimated how much the smallest bank capable of filing a 10-K would hold, and assumed the median would sit a few times above that floor — giving $1.3 billion against an actual $5.2 billion.
-
-The minimum of a distribution does not fix the scale of its centre, least of all in a cohort where the entities that report sit well above the legal threshold. gpt-5.6-sol anchored on operational size instead — branches, deposits per branch, the ratio of assets to deposits — and came close. Neither chain contains an arithmetic error. They diverge because they hang from different quantities.
-
-The knife is that the question offers an obvious anchor which is the wrong one. A filing threshold is salient, retrievable, and irrelevant to the median.
-
-> **Surveyed length of underwater passages in Sistema Ox Bel Ha, the world's longest underwater cave, as of Feb 2026 (km)**
-
-claude-opus-4.8 failed twice over. It started from a length of 240 to 290 km — the figure that circulated nearly a decade ago — and then added only a few kilometres of growth, for a system that is continuously surveyed. It landed at 275 km against an actual 541.7. Worse, it declared an interval of 249 to 307 km: high confidence in a band that does not contain the answer. gpt-5.6-sol used an updated baseline and came close.
-
-The knife is staleness. The most memorable figure for this quantity is a decade out of date, and the quantity itself grows continuously, so recall is not merely unhelpful — it is actively misleading. The benchmark does not only penalise not knowing. It penalises not knowing that you don't know.
 
 ---
+
 
 ## Contamination checks
 
-Every question above works because recall doesn't get the model there. Ox Bel Ha is the friendly case: the memorable figure exists, and reaching for it produces a confident wrong answer. The dangerous case is the reverse — a question whose answer sits somewhere in pretraining, recited correctly, scored as though it were an estimate.
+Every question above works because recall doesn't get the model there. Ox Bel Ha is the friendly case: the memorable figure exists, and reaching for it produces a confident wrong answer. The dangerous case is the reverse: a question whose answer sits somewhere in pretraining, recited correctly, scored as though it were an estimate.
 
 We can't check directly. Nobody outside the labs can inspect what these models trained on; there is no corpus to grep. So we triangulate, with signals that are individually weak and fail in different directions.
 
-**An open corpus as a stand-in.** infini-gram (Liu et al., 2024) indexes trillion-token pretraining corpora; we query OLMo-2, around 4.6T tokens. Recall scales with how often a fact appears in pretraining (Kandpal et al., 2023), so frequency is a first proxy for memorisation risk. It is a stand-in, not ground truth — the real corpus is secret and larger. A low count means no evidence of recall, never safe.
+**An open corpus as a stand-in.** infini-gram (Liu et al., 2024) indexes trillion-token pretraining corpora; we query OLMo-2, around 4.6T tokens. Recall scales with how often a fact appears in pretraining (Kandpal et al., 2023), so frequency is a first proxy for memorisation risk.
 
 **Frequency over-warns, so check attestation.** "LeBron James" is among the most frequent entities in any corpus, but sum the ages of every opposing player he shared a court with has an answer nowhere written down. Entity frequency screams contamination and is wrong. The sharper question is whether the specific answer is stated next to the subject — not whether 8,849 appears somewhere near Everest, but whether a document says Everest is 8,849 metres. We query this as a conjunction of entity, subject, and value, keeping only documents where the terms cluster within a few hundred characters.
 
-**Two things we got wrong first.** A conjunction of only common terms returns a subsampled count: the engine samples ultra-frequent terms for speed, and the intersection of samples comes back zero. That zero means unknown, not absent — keep at least one rare term in the query. And proximity has to scale with term count. Two terms stating a fact sit tight; four spread further across a sentence, so a fixed gap threshold filters real co-occurrences to nothing.
-
-**Guided and free.** Each question is solved twice — once under the guided prompt above, which drives all scoring, and once under a free prompt that lets the model choose its own method. Free solves are unscored; they serve as a contamination signal, discussed below.
+**Guided and free.** Each question is solved twice, once under the guided prompt above, which drives all scoring, and once under a free prompt that lets the model choose its own method. Free solves are unscored; they serve as a contamination signal, discussed below.
 
 **Ask the model to commit, then read the logprobs.** The corpus signals describe the world. This one describes the model. When it writes a number, we read the probability mass on the most likely token at the first significant digit. Concentrated mass means committing; spread mass means estimating.
-
-The confound that cost us a day was round numbers. A confident "100" commits exactly as hard as a recalled fact, and it is a guess, not a memory. The discriminator is precision. Confident and precise is the recall tell; confident and round is an anchor. A model that writes 8,849 with certainty memorised it. One that writes 100 with certainty is anchoring.
 
 Together:
 
 | Written down? | Commits? | Round? | Verdict |
 |---|---|---|---|
-| yes | yes | no | Recall — rewrite the question |
-| no | yes | yes | Anchor — a confident guess, fine |
-| no | no | — | Estimation — the case we want |
-
-The signals cover each other's blind spots. Commitment can't distinguish recall from a round guess; frequency can. Frequency can't distinguish a famous entity from a memorised answer; attestation can.
+| yes | yes | no | **Recall** |
+| no | yes | yes | **Anchor** |
+| no | no | — | **Estimation** |
 
 **Ask the model what it did.** The cheapest signal is the most direct. Alongside the guided solve, the free solve imposes no method and asks the model to classify what it actually did — recall, reference class, decomposition, analogy, or a mixture. A model reporting recall on a question designed to require estimation is telling us the question is broken, and it often says so in plain language: I recall this is around 2.7 million. That sentence is a contamination flag in English and it costs nothing to collect.
 
 **Self-report is not verification.** A model can label its output "decomposition" while having recalled the answer and built a decomposition around it, and the decomposition it writes will look like honest work. So a report of recall is informative; a report of decomposition is not.
 
-**What this can and cannot claim.** It is a recall-availability probe, not a contamination detector. Proving a specific document was in training — membership inference — performs close to random on large models (Duan et al., 2024), and we don't attempt it. We ask the weaker, answerable question of whether the answer is cheaply available from parametric knowledge, which is the thing that invalidates a Fermi question regardless of how it got there.
-
-And every signal here is asymmetric in the same direction. High commitment on an attested value is strong evidence a question fails. Low commitment is weak evidence a question is sound — a two-step derivation escapes a single-token probe, probing "8.4 million" versus "8,400,000" gives different numbers, and a model can decline to admit what it remembers. We can catch admission. We cannot catch concealment.
-
-None of this is a detector in the green-light sense. It is triage: cheap reads that tell us which questions to look at harder. And it is the fallback rather than the primary defence — the primary defence is building questions where recall isn't available in the first place.
+**This is a recall-availability probe** , not a contamination detector. Proving a specific document was in training — membership inference — performs close to random on large models (Duan et al., 2024), and we don't attempt it. We ask the weaker, answerable question of whether the answer is cheaply available from parametric knowledge, which is the thing that invalidates a Fermi question regardless of how it got there.
 
 ---
 
@@ -179,27 +169,23 @@ Questions sit in one of three tiers, each sealing one more thing than the last.
 
 **Private**: question and ground truth both sealed. This is the headline board.
 
-The split maps onto the ordinary train/dev/test division, and onto ARC-AGI's public/semi-private/private structure. "Sealed" means sealed from the public, not from the model. Grading a private-tier question means sending it to the model being evaluated, and every model on the board is called through OpenRouter, which routes to whichever upstream provider serves that model. OpenRouter itself does not train on inputs or outputs, but the providers behind it don't all make the same commitment, and we run OpenRouter's default routing rather than restricting to providers with a no-training or zero-retention policy. So a private question is invisible to anyone browsing the site, but not invisible to whichever provider answers it — the same exposure any API call carries, no more and no less.
+The split maps onto the ordinary train/dev/test division, and onto ARC-AGI's public/semi-private/private structure. "Sealed" means sealed from the public, not from the model. Grading a private-tier question means sending it to the model being evaluated, and every model on the board is called through OpenRouter, which routes to whichever upstream provider serves that model. OpenRouter itself does not train on inputs or outputs, but the providers behind it don't all make the same commitment, and we run OpenRouter's default routing rather than restricting to providers with a no-training or zero-retention policy. So a private question is invisible to anyone browsing the site, but not invisible to whichever provider answers it.
 
 
 ## Results
 
-The bank holds 109 questions — 64 with point ground truth, 45 with authored distributional ground truth — evaluated on 40 models. Of 4,360 model–question cells, 4,297 produced a scorable Squiggle program. The 63 exclusions (1.4%) are dropped rather than penalised; most are evaluation failures, the rest truncated or filtered responses. One model, claude-fable-5, produced a program on only 58% of the bank and is excluded from the figures below.
-
+The bank holds 109 questions.64 with point ground truth, 45 with authored distributional ground truth, evaluated on 40 models.
 ### Calibration
 
 
-Models are substantially overconfident. Across all answered cells, the fraction of ground-truth mass falling inside a model's stated 90% interval is 0.552 (95% bootstrap CI [0.511, 0.591], resampling questions rather than cells, 2,000 resamples). Under the stricter reading — does the reference median land inside the interval at all — coverage is 0.570 ([0.524, 0.612]) against a nominal of 0.941 for a bank of this composition.
+**Models are substantially overconfident.**
 
-No model reaches nominal. Coverage ranges from 0.284 for llama-4-scout to 0.798 for gpt-5.6-luna, and even the best model on the board is more than ten points short of the confidence it declares. This is not a property of the weak end of the field: the result holds for every frontier model we evaluated.
-
-The magnitude is easier to read in widths. The median stated interval spans 0.467 dex — a factor of 2.9 between p5 and p95, or σ ≈ 0.33 nats. If the entire shortfall were insufficient spread around correctly placed centres, intervals would need to be roughly 2.2× wider to reach nominal: a median span of about a decade rather than a third of one. That calculation assumes unbiased log-errors, which we have not verified. Separating displaced centres from insufficient spread requires the per-cell bias diagnostic, and we report it as future work.
-
-Coverage varies sharply across questions, and the tail is diagnostic rather than merely hard. One point-truth question was missed by 38 of 40 models. When a field this wide misses a fixed number almost unanimously, the likelier explanation is an authoring error than a difficult estimate, and the item is under audit. Question-level coverage is the cheapest audit signal we have, and it is now part of the review pass on every edition.
-
-Two cautions on reading these numbers. Coverage is not the metric the board ranks on: it is unbounded in width and so rewards precisely the hedging Cramér-log is built to penalise. We report it because it is the standard diagnostic for the claim at issue and because it is directly comparable to prior work. And the exclusions are not missing at random — a model that fails to emit a valid program on the questions it finds hardest has its coverage measured on an easier subset, which biases these figures upward by an unknown amount.
+Across all answered cells, the fraction of ground-truth mass falling inside a model's stated 90% interval is 0.552 (95% bootstrap CI [0.511, 0.591], resampling questions rather than cells). Per model it runs from 0.283 for llama-4-scout to 0.776 for gpt-5.6-luna — so even the best on the board falls more than twelve points short of the 90% it declares, and most fall much further. Not one reaches it, at either end of the field. Under the stricter reading, which asks only whether the reference median lands inside the interval, pooled coverage is 0.570 ([0.524, 0.612]) against a nominal of 0.941 for a bank of this composition.
 
 This replicates FermiEval's central finding on a bank built to resist the contamination exposure that made it hard to trust.
+{/*In widths: the median stated interval spans 0.467 dex, a factor of 2.9 between p5 and p95. If the shortfall were entirely insufficient spread around correctly placed centres, intervals would need to be roughly 2.2× wider — closer to a decade than a third of one.*/}
+
+**Coverage is not the metric the board ranks on:** it is unbounded in width and so rewards precisely the hedging Cramér-log is built to penalise. We report it because it is the standard diagnostic for the claim at issue and because it is directly comparable to prior work. 
 
 ### Leaderboard
 
@@ -231,6 +217,14 @@ The zero of the scale is the sampling floor rather than zero itself. D is estima
 
 ---
 
+
+
+## Next 
+
+A benchmark like this is only as durable as its supply of questions recall cannot reach. Every question is a candidate for the next pretraining run, every model generation raises the floor, and we hope to retire items as recall catches up. 
+Questions needs a quantity that is authoritative, pinnable to a version, and not already published in the composed form we ask for. What separates a question that discriminates from one that merely looks hard is what we called the knife, and we currently find knives by hand, by reading traces and noticing where a plausible chain goes wrong. We can recognise one after the fact. We cannot yet ask for one. Whether that recognition can be turned into a criterion.
+is the open problem we find most interesting, and we would be glad to hear from anyone who has thought about it.
+
 ## Limitations
 
 **Ground truth is authored, not observed.** We have done our best efforts to keep our ground truth close to reality, but this is an extremely effort/resource intensive
@@ -259,7 +253,7 @@ Reviewing REALFP's gold answers on the questions where GPT-5.5 missed, we found 
 
 Open Science Olympiad Fermi Questions (~158 questions, used in a May 2025 TextQL eval) uses order-of-magnitude scoring: did you get the right power of ten? This is the harshest reasonable metric and also the least informative. A model that's off by 2× and a model that's off by 9× receive the same score. We ran GPT-5.5 on this set as well and found similar results: not saturated, but the scoring granularity is too coarse to distinguish interesting capability differences.
 
-FermiEval (Epstein et al., Stanford, arXiv:2510.26995) is the most recent entry. It adds confidence-interval scoring via the Winkler score, which is a step toward calibration measurement. However, its questions are drawn from a public Science Olympiad GitHub repository — almost certainly present in frontier training data. The paper does not run contamination checks. Its main finding, that LLMs are overconfident on Fermi confidence intervals, is plausible but hard to trust given the contamination exposure.
+FermiEval (Epstein et al., Stanford, arXiv:2510.26995) is the most recent entry. It adds confidence-interval scoring via the Winkler score, which is a step toward calibration measurement. However, its questions are drawn from a public Science Olympiad GitHub repository — almost certainly present in frontier training data. The paper does not run contamination checks. Its main finding is that LLMs are overconfident on Fermi confidence intervals.
 
 None of these benchmarks require distributional outputs, use strictly proper scoring rules, or construct questions specifically to resist training-data contamination. FermiBench addresses all three gaps.
 
