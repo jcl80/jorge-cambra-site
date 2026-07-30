@@ -4,90 +4,15 @@
 
 ## Introduction
 
-Estimation problems are interesting because they test capabilities we care about deeply: the recursive nature of subproblems, creativity in solutions, need for reasonable abstractions, commonsense reasoning (Kalyan et al., 2021), and the ability to express calibrated uncertainty. We also care about instruction following and adherence to the question as stated.<Footnote>PLACEHOLDER — replace with your note, e.g.: LLM benchmarks will also almost always test instruction following and adherence to the question as stated, since a model that ignores constraints in the prompt can't be scored fairly against one that follows them.</Footnote>
+Estimation problems are interesting because they test capabilities we care about deeply: the recursive nature of subproblems, creativity in solutions, need for reasonable abstractions, commonsense reasoning (Kalyan et al., 2021), and the ability to express calibrated uncertainty.<Footnote>LLM benchmarks will also almost always test instruction following and adherence to the question as stated, since a model that ignores constraints in the prompt can't be scored fairly against one that follows them.</Footnote>
 
 Two distinct capabilities are in play. One is estimation: is the answer in the right place? The other is calibration: does the model's stated uncertainty match how uncertain it actually is?
 
 Measuring the second requires the model to say more than a number. If it gives a point estimate, there is no uncertainty to check. So FermiBench asks for a distribution, and scores it with a rule that rewards honest belief rather than strategic hedging.
 
-## Ground truth
+Scoring a distribution means having something honest to score it against, and rewarding calibration rather than hedging means the scoring rule itself has to be chosen carefully, not just written down. Pinning that ground truth and picking that rule are where most of the design effort went, and where a reader should look hardest for cracks — so that's where we start.
 
-Pinning ground truth is the hardest part of building this benchmark, and it's where a reader should be most sceptical. Three kinds appear in the bank, with different reliability.
-
-Computed from an authoritative dataset. The median total assets of state-chartered banks filing a 10-K is not an estimate — it's a query. We pull the filings, filter the cohort, take the median. The uncertainty is definitional rather than statistical: what counts as state-chartered, which quarter, whether amended filings are included. We pin the dataset version and record the query, so the number is reproducible even if the source updates. These resolve as point truths.
-
-A published figure. Ox Bel Ha's surveyed length is 541.7 km because a survey says so. Here we inherit whatever error the source carries, and the main risk is staleness rather than noise — which is why the question is dated as of Feb 2026 and why the provenance is pinned to a specific publication rather than to "the current figure." Also point truths.
-
-A hand-authored decomposition. For quantities nobody publishes directly, we build the answer the same way we ask the model to: factors, each with a distribution, composed in Squiggle. These resolve as distributions, and they're the ones that need justification. Each decomposition is evaluated by Monte Carlo to a 90% credible interval, to which the harness fits a lognormal and from which it resamples. The refit is exact for products and quotients of lognormal factors — the dominant composition in this corpus — and mildly lossy otherwise. Write G for the reference distribution so obtained, in log space.
-
-What G represents is the pivot of the design. It is not an approximation of the truth to be improved upon but the truth as the benchmark defines it, in scale as much as in location: its dispersion is the uncertainty the available evidence leaves standing, not the author's hesitancy. A model is therefore not entitled to be more certain than the reference. An F narrower than G asserts a precision that nothing supports, and asserts it whether or not its centre is well placed; a well-centred narrow answer is not a better one, only a less calibrated one. This is the standard against which the three surviving scoring rules were judged.
-
-### Why lognormal
-
-Every factor is modelled as a lognormal. It's the natural choice for strictly positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are lognormal, so a decomposition chain stays in-family rather than requiring numerical convolution at each step. It's also the convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022) and the default in Squiggle's to(lo, hi) idiom, which means ground truth and model output share one representation.
-
-Worth being straight about: we inherited this convention rather than deriving it. We haven't tested normal-in-log-space against alternatives, or 90% bands against 80% or 95%. It's standard and defensible; it wasn't chosen over competitors in an experiment.
-
-### Worked example
-
-What fraction of Germany's total land area would need to be covered by solar panels to replace its annual coal electricity generation?
-
-```javascript
-coal_kwh = to(93.9e9, 98.3e9)   // Fraunhofer ISE vs SMARD, 2025
-solar_yield = to(150, 200)      // PVPro Solar, single-source range
-germany_m2 = 357022e6           // Eurostat 
-coal_kwh / solar_yield / germany_m2
-```
-
-Result: 90% CI approximately [0.0013, 0.0018], median ≈ 0.0015 — about 0.15% of Germany's land area, roughly 550 km² of panels.
-
-## Scoring methodology
-
-The objectives of the benchmark constrained the choice of rule more tightly than is usual. Calibration is unobservable in a point estimate, so the rule had to score a full distribution. Honesty had to be optimal rather than merely virtuous, so the rule had to be proper with respect to whatever target we adopted. The quantities span several orders of magnitude, so it had to act on log-transformed samples, under which multiplicative error is symmetric. The bank holds on the order of a hundred questions, so its influence had to be bounded, no single item carrying the ranking. And the failure we most wanted to expose is a model claiming more precision than its evidence affords, so the rule had to score claimed precision against warranted precision — which is possible only where the target carries a scale and not merely a location.
-
-Four of the rules in common use fail one of these outright. fp_score (Kalyan et al., 2021), the established metric of the Fermi literature, compares a number against a number and is silent on everything but location. Brier is defined on discrete outcomes. The logarithmic score is strictly proper and local, and remains the reference standard in probabilistic forecasting (Gneiting & Raftery, 2007), but it is unbounded below: a single near-zero density at the realised value would dominate any aggregate over a bank this size. The Winkler interval score, which underlies the interval calibration of FermiEval (2025), is proper and unusually robust, but retains only two quantiles of the forecast. Wasserstein-1 met every requirement and is taken up below. Three rules survived the screen and were evaluated in full: CRPS-log, KL-log and Cramér-log.
-
-G is the reference described above, in log space; F is the model's distribution, likewise in log space.
-
-### The three candidates
-
-They differ less in their formulas than in the object each compares against, and it is that difference which decides them. With X, X′ independent draws from F and x the median of G:
-
-**CRPS-log** (Gneiting & Raftery, 2007, §4.2), in its sample energy form,
-
-    CRPS(F, x) = E|X − x| − ½·E|X − X′|
-
-is strictly proper with respect to a realised outcome, separates cleanly into bias and dispersion, and tends to absolute error as F degenerates.
-
-**KL-log** is closed between the fitted lognormals, equivalent there to the Gaussian divergence in log space and free of any sampling or smoothing parameter,
-
-    KL(F‖G) = ln(σ_G/σ_F) + ( σ_F² + (μ_F − μ_G)² ) / (2·σ_G²) − ½
-
-and is the most scale-sensitive of the three. Being asymmetric it is computed in both directions, the larger value identifying the side on which the model errs.
-
-**Cramér-log**, the d = 1 energy score (Gneiting & Raftery, 2007, §6.2; Székely & Rizzo, 2013),
-
-    D(F, G) = ∫ ( F(y) − G(y) )² dy
-
-is the L² distance between empirical distribution functions: symmetric, a metric, finite even on disjoint supports where the divergence-based rules fail, and coincident with CRPS in the limit where G collapses to a point mass. Wasserstein-1 is the corresponding L¹ functional.
-
-### The choice
-
-We adopted Cramér-log as the primary metric. As a divergence it attains its minimum uniquely at F = G, and since G is the truth in scale as well as location, that minimiser is the honest report: the rule is proper with respect to the target the benchmark actually poses. Its rewarding agreement with the dispersion of G is thus the intended behaviour and not a concession — under the reading of G established above, matching that dispersion is what an honest forecaster does.
-
-CRPS-log, which had been our primary at the outset, fails on the same argument inverted. Reducing G to its median attributes zero dispersion to the truth, so an F concentrated at x attains the global optimum however little precision the evidence affords. The rule holds no representation of warranted uncertainty and cannot penalise its overstatement, which disqualifies it as a headline number in a domain whose dominant failure is systematic overconfidence (FermiEval, 2025).
-
-KL-log fails for the converse reason. It addresses the same requirement, and with the greatest sensitivity of the three, but it diverges as the supports separate, so a single badly missed item would swallow the aggregate — the defect that already excluded the logarithmic score. It is besides asymmetric, and so induces no ordering without an arbitrary choice of direction, and it rests on the lognormal fit rather than on the samples themselves.
-
-Wasserstein-1 was the one substitutable alternative, differing from Cramér-log only in norm. The L¹ functional is more robust to outliers and reads directly in the units of the variable; we preferred the L² for its sharper response to large discrepancies between F and G, and for the exact reduction to CRPS.
-
-### Reading the leaderboard
-
-Two properties of the reported values bear on their interpretation.
-
-Scores are in nats. The transform is the natural logarithm, and the metric and its diagnostics are reported as computed; conversion to decades is the constant ln 10 ≈ 2.303, so a bias of 0.350 nats is 0.15 orders of magnitude and a dispersion of one decade appears as a sharpness of 2.30. Orderings are invariant to the base, magnitudes are not.
-
-The zero of the scale is the sampling floor rather than zero itself. D is estimated between two finite samples, so its expectation is positive even at F = G; the floor depends on the sample count alone — some 0.018 at n = 64, 0.071 at n = 16 and 0.001 at n = 1024, falling as O(1/n) (Anderson, 1962). We fixed and documented a single n across all models, which makes the offset common to the leaderboard and leaves comparisons between models untouched. The floor at that n, not zero, is the point against which an absolute score is read.
+---
 
 ## Protocol
 
@@ -104,21 +29,71 @@ We evaluate the program, sample the resulting distribution, and score the sample
 
 We deliberately keep the available DSL surface small: to(), arithmetic, variables, comments. No mixtures, no named distribution families, no beta. A larger surface would let format fluency contaminate the measurement, and we would rather score estimation than Squiggle.
 
-**Guided and free.** Each question is solved twice — once under the guided prompt above, which drives all scoring, and once under a free prompt that lets the model choose its own method. Free solves are unscored; they serve as a contamination signal, discussed below.
+---
 
-**Tiers.** Questions sit in one of three tiers, each sealing one more thing than the last.
+## Ground truth
 
-Open — question and ground truth both public. Train against it freely; it exists so that the format and the scoring are inspectable.
+Pinning ground truth is the hardest part of building this benchmark, and it's where a reader should be most sceptical. Three kinds appear in the bank, with different reliability. Lets see some examples:
 
-Public — question visible, ground truth sealed server-side. Submissions are graded by us.
+From the following question: 
 
-Private — question and ground truth both sealed. This is the headline board.
+> **Surveyed length of underwater passages in Sistema Ox Bel Ha, the world's longest underwater cave, as of Feb 2026 (km)**
 
-The split maps onto the ordinary train/dev/test division, and onto ARC-AGI's public/semi-private/private structure. "Sealed" means sealed from the public, not from the model. Grading a private-tier question means sending it to the model being evaluated, and every model on the board is called through OpenRouter, which routes to whichever upstream provider serves that model. OpenRouter itself does not train on inputs or outputs, but the providers behind it don't all make the same commitment, and we run OpenRouter's default routing rather than restricting to providers with a no-training or zero-retention policy. So a private question is invisible to anyone browsing the site, but not invisible to whichever provider answers it — the same exposure any API call carries, no more and no less.
+**A published figure.** Ox Bel Ha's surveyed length is 541.7 km because a survey says so. Here we inherit whatever error the source carries, and the main risk is staleness rather than noise — which is why the question is dated as of Feb 2026 and why the provenance is pinned to a specific publication rather than to "the current figure." Also point truths.
 
-## Results
+**Computed from an authoritative dataset.** The median total assets of state-chartered banks filing a 10-K is not an estimate — it's a query. We pull the filings, filter the cohort, take the median. The uncertainty is definitional rather than statistical: what counts as state-chartered, which quarter, whether amended filings are included. We pin the dataset version and record the query, so the number is reproducible even if the source updates. These resolve as point truths.
 
-The current bank holds 109 questions across 11 domains, evaluated on 40 models. The full leaderboard is at [fermibench.com](https://fermibench.com).
+**A hand-authored decomposition.** For quantities nobody publishes directly, we build the answer the same way we ask the model to: factors, each with a distribution, composed in Squiggle. These resolve as distributions, and they're the ones that need justification. Each decomposition is evaluated by Monte Carlo to a 90% credible interval, to which the harness fits a lognormal and from which it resamples. The refit is exact for products and quotients of lognormal factors — the dominant composition in this corpus — and mildly lossy otherwise. Write G for the reference distribution so obtained, in log space.
+
+What G represents is the pivot of the design. It is not an approximation of the truth to be improved upon but the truth as the benchmark defines it, in scale as much as in location: its dispersion is the uncertainty the available evidence leaves standing, not the author's hesitancy. A model is therefore not entitled to be more certain than the reference. An F narrower than G asserts a precision that nothing supports, and asserts it whether or not its centre is well placed; a well-centred narrow answer is not a better one, only a less calibrated one. This is the standard against which the three surviving scoring rules were judged.
+
+Every factor is modelled as a **lognormal.** It's the natural choice for strictly positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are lognormal, so a decomposition chain stays in-family rather than requiring numerical convolution at each step. It's also the convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022) and the default in Squiggle's to(lo, hi) idiom, which means ground truth and model output share one representation.
+
+We inherited this convention rather than deriving it. We haven't tested normal-in-log-space against alternatives, or 90% bands against 80% or 95%. It's standard and defensible; it wasn't chosen over competitors in an experiment.
+
+---
+
+## Scoring methodology
+
+The objectives of the benchmark constrained the choice of rule more tightly than is usual. Calibration is unobservable in a point estimate, so the rule had to score a full distribution. Honesty had to be optimal rather than merely virtuous, so the rule had to be proper with respect to whatever target we adopted. The quantities span several orders of magnitude, so it had to act on log-transformed samples, under which multiplicative error is symmetric. The bank holds on the order of a hundred questions, so its influence had to be bounded, no single item carrying the ranking. And the failure we most wanted to expose is a model claiming more precision than its evidence affords, so the rule had to score claimed precision against warranted precision — which is possible only where the target carries a scale and not merely a location.
+
+Four of the rules in common use fail one of these outright. fp_score (Kalyan et al., 2021), the established metric of the Fermi literature, compares a number against a number and is silent on everything but location. Brier is defined on discrete outcomes. The logarithmic score is strictly proper and local, and remains the reference standard in probabilistic forecasting (Gneiting & Raftery, 2007), but it is unbounded below: a single near-zero density at the realised value would dominate any aggregate over a bank this size. The Winkler interval score, which underlies the interval calibration of FermiEval (2025), is proper and unusually robust, but retains only two quantiles of the forecast. Wasserstein-1 met every requirement and is taken up below. Three rules survived the screen and were evaluated in full: CRPS-log, KL-log and Cramér-log.
+
+G is the reference described above, in log space; F is the model's distribution, likewise in log space.
+
+### Candidates
+
+They differ less in their formulas than in the object each compares against, and it is that difference which decides them. With X, X′ independent draws from F and x the median of G:
+
+**CRPS-log** (Gneiting & Raftery, 2007, §4.2), in its sample energy form,
+
+<Formula>CRPS(F, x) = E|X − x| − ½·E|X − X′|</Formula>
+
+is strictly proper with respect to a realised outcome, separates cleanly into bias and dispersion, and tends to absolute error as F degenerates.
+
+**KL-log** is closed between the fitted lognormals, equivalent there to the Gaussian divergence in log space and free of any sampling or smoothing parameter,
+
+<Formula>KL(F‖G) = ln(σ_G/σ_F) + ( σ_F² + (μ_F − μ_G)² ) / (2·σ_G²) − ½</Formula>
+
+and is the most scale-sensitive of the three. Being asymmetric it is computed in both directions, the larger value identifying the side on which the model errs.
+
+**Cramér-log**, the d = 1 energy score (Gneiting & Raftery, 2007, §6.2; Székely & Rizzo, 2013),
+
+<Formula>D(F, G) = ∫ ( F(y) − G(y) )² dy</Formula>
+
+is the L² distance between empirical distribution functions: symmetric, a metric, finite even on disjoint supports where the divergence-based rules fail, and coincident with CRPS in the limit where G collapses to a point mass. Wasserstein-1 is the corresponding L¹ functional.
+
+### Cramér-log
+
+We adopted Cramér-log as the primary metric. As a divergence it attains its minimum uniquely at F = G, and since G is the truth in scale as well as location, that minimiser is the honest report: the rule is proper with respect to the target the benchmark actually poses. Its rewarding agreement with the dispersion of G is thus the intended behaviour and not a concession — under the reading of G established above, matching that dispersion is what an honest forecaster does.
+
+CRPS-log, which had been our primary at the outset, fails on the same argument inverted. Reducing G to its median attributes zero dispersion to the truth, so an F concentrated at x attains the global optimum however little precision the evidence affords. The rule holds no representation of warranted uncertainty and cannot penalise its overstatement, which disqualifies it as a headline number in a domain whose dominant failure is systematic overconfidence (FermiEval, 2025).
+
+KL-log fails for the converse reason. It addresses the same requirement, and with the greatest sensitivity of the three, but it diverges as the supports separate, so a single badly missed item would swallow the aggregate — the defect that already excluded the logarithmic score. It is besides asymmetric, and so induces no ordering without an arbitrary choice of direction, and it rests on the lognormal fit rather than on the samples themselves.
+
+Wasserstein-1 was the one substitutable alternative, differing from Cramér-log only in norm. The L¹ functional is more robust to outliers and reads directly in the units of the variable; we preferred the L² for its sharper response to large discrepancies between F and G, and for the exact reduction to CRPS.
+
+---
 
 ## Question building
 
@@ -152,6 +127,8 @@ claude-opus-4.8 failed twice over. It started from a length of 240 to 290 km —
 
 The knife is staleness. The most memorable figure for this quantity is a decade out of date, and the quantity itself grows continuously, so recall is not merely unhelpful — it is actively misleading. The benchmark does not only penalise not knowing. It penalises not knowing that you don't know.
 
+---
+
 ## Contamination checks
 
 Every question above works because recall doesn't get the model there. Ox Bel Ha is the friendly case: the memorable figure exists, and reaching for it produces a confident wrong answer. The dangerous case is the reverse — a question whose answer sits somewhere in pretraining, recited correctly, scored as though it were an estimate.
@@ -163,6 +140,8 @@ We can't check directly. Nobody outside the labs can inspect what these models t
 **Frequency over-warns, so check attestation.** "LeBron James" is among the most frequent entities in any corpus, but sum the ages of every opposing player he shared a court with has an answer nowhere written down. Entity frequency screams contamination and is wrong. The sharper question is whether the specific answer is stated next to the subject — not whether 8,849 appears somewhere near Everest, but whether a document says Everest is 8,849 metres. We query this as a conjunction of entity, subject, and value, keeping only documents where the terms cluster within a few hundred characters.
 
 **Two things we got wrong first.** A conjunction of only common terms returns a subsampled count: the engine samples ultra-frequent terms for speed, and the intersection of samples comes back zero. That zero means unknown, not absent — keep at least one rare term in the query. And proximity has to scale with term count. Two terms stating a fact sit tight; four spread further across a sentence, so a fixed gap threshold filters real co-occurrences to nothing.
+
+**Guided and free.** Each question is solved twice — once under the guided prompt above, which drives all scoring, and once under a free prompt that lets the model choose its own method. Free solves are unscored; they serve as a contamination signal, discussed below.
 
 **Ask the model to commit, then read the logprobs.** The corpus signals describe the world. This one describes the model. When it writes a number, we read the probability mass on the most likely token at the first significant digit. Concentrated mass means committing; spread mass means estimating.
 
@@ -188,6 +167,70 @@ And every signal here is asymmetric in the same direction. High commitment on an
 
 None of this is a detector in the green-light sense. It is triage: cheap reads that tell us which questions to look at harder. And it is the fallback rather than the primary defence — the primary defence is building questions where recall isn't available in the first place.
 
+---
+
+## Tiers
+
+Questions sit in one of three tiers, each sealing one more thing than the last.
+
+**Open**: Question and ground truth both public. Train against it freely; it exists so that the format and the scoring are inspectable.
+
+**Public**: question visible, ground truth sealed server-side. Submissions are graded by us.
+
+**Private**: question and ground truth both sealed. This is the headline board.
+
+The split maps onto the ordinary train/dev/test division, and onto ARC-AGI's public/semi-private/private structure. "Sealed" means sealed from the public, not from the model. Grading a private-tier question means sending it to the model being evaluated, and every model on the board is called through OpenRouter, which routes to whichever upstream provider serves that model. OpenRouter itself does not train on inputs or outputs, but the providers behind it don't all make the same commitment, and we run OpenRouter's default routing rather than restricting to providers with a no-training or zero-retention policy. So a private question is invisible to anyone browsing the site, but not invisible to whichever provider answers it — the same exposure any API call carries, no more and no less.
+
+
+## Results
+
+The bank holds 109 questions — 64 with point ground truth, 45 with authored distributional ground truth — evaluated on 40 models. Of 4,360 model–question cells, 4,297 produced a scorable Squiggle program. The 63 exclusions (1.4%) are dropped rather than penalised; most are evaluation failures, the rest truncated or filtered responses. One model, claude-fable-5, produced a program on only 58% of the bank and is excluded from the figures below.
+
+### Calibration
+
+
+Models are substantially overconfident. Across all answered cells, the fraction of ground-truth mass falling inside a model's stated 90% interval is 0.552 (95% bootstrap CI [0.511, 0.591], resampling questions rather than cells, 2,000 resamples). Under the stricter reading — does the reference median land inside the interval at all — coverage is 0.570 ([0.524, 0.612]) against a nominal of 0.941 for a bank of this composition.
+
+No model reaches nominal. Coverage ranges from 0.284 for llama-4-scout to 0.798 for gpt-5.6-luna, and even the best model on the board is more than ten points short of the confidence it declares. This is not a property of the weak end of the field: the result holds for every frontier model we evaluated.
+
+The magnitude is easier to read in widths. The median stated interval spans 0.467 dex — a factor of 2.9 between p5 and p95, or σ ≈ 0.33 nats. If the entire shortfall were insufficient spread around correctly placed centres, intervals would need to be roughly 2.2× wider to reach nominal: a median span of about a decade rather than a third of one. That calculation assumes unbiased log-errors, which we have not verified. Separating displaced centres from insufficient spread requires the per-cell bias diagnostic, and we report it as future work.
+
+Coverage varies sharply across questions, and the tail is diagnostic rather than merely hard. One point-truth question was missed by 38 of 40 models. When a field this wide misses a fixed number almost unanimously, the likelier explanation is an authoring error than a difficult estimate, and the item is under audit. Question-level coverage is the cheapest audit signal we have, and it is now part of the review pass on every edition.
+
+Two cautions on reading these numbers. Coverage is not the metric the board ranks on: it is unbounded in width and so rewards precisely the hedging Cramér-log is built to penalise. We report it because it is the standard diagnostic for the claim at issue and because it is directly comparable to prior work. And the exclusions are not missing at random — a model that fails to emit a valid program on the questions it finds hardest has its coverage measured on an easier subset, which biases these figures upward by an unknown amount.
+
+This replicates FermiEval's central finding on a bank built to resist the contamination exposure that made it hard to trust.
+
+### Leaderboard
+
+The current top of the board:
+
+| # | Model | Mean Cramér | Answered | Ran |
+|---|---|---|---|---|
+| 1 | anthropic/claude-opus-5 | **0.2939** | 109/109 | 7/28/2026 |
+| 2 | meta/muse-spark-1.1 | **0.3090** | 109/109 | 7/28/2026 |
+| 3 | openai/gpt-5.6-sol | **0.3157** | 109/109 | 7/28/2026 |
+| 4 | openai/gpt-5.5 | **0.3245** | 109/109 | 7/28/2026 |
+| 5 | anthropic/claude-opus-4.8 | **0.3309** | 109/109 | 7/28/2026 |
+| 6 | openai/gpt-5.6-terra | **0.3625** | 109/109 | 7/28/2026 |
+| 7 | openai/gpt-5.6-terra-pro | **0.3628** | 109/109 | 7/28/2026 |
+| 8 | google/gemini-3.5-flash | **0.3770** | 109/109 | 7/29/2026 |
+| 9 | openai/gpt-5.6-luna | **0.3785** | 109/109 | 7/28/2026 |
+| 10 | openai/gpt-5 | **0.3899** | 109/109 | 7/28/2026 |
+| 11 | qwen/qwen3.7-max | **0.3975** | 109/109 | 7/28/2026 |
+| 12 | z-ai/glm-5.2 | **0.3993** | 109/109 | 7/28/2026 |
+| 13 | openai/gpt-5.1 | **0.4011** | 109/109 | 7/28/2026 |
+
+Full leaderboard at [fermibench.com](https://fermibench.com).
+
+Two properties of the reported values bear on their interpretation.
+
+Scores are in nats. The transform is the natural logarithm, and the metric and its diagnostics are reported as computed; conversion to decades is the constant ln 10 ≈ 2.303, so a bias of 0.350 nats is 0.15 orders of magnitude and a dispersion of one decade appears as a sharpness of 2.30. Orderings are invariant to the base, magnitudes are not.
+
+The zero of the scale is the sampling floor rather than zero itself. D is estimated between two finite samples, so its expectation is positive even at F = G; the floor depends on the sample count alone — some 0.018 at n = 64, 0.071 at n = 16 and 0.001 at n = 1024, falling as O(1/n) (Anderson, 1962). We fixed and documented a single n across all models, which makes the offset common to the leaderboard and leaves comparisons between models untouched. The floor at that n, not zero, is the point against which an absolute score is read.
+
+---
+
 ## Limitations
 
 **Ground truth is authored, not observed.** We have done our best efforts to keep our ground truth close to reality, but this is an extremely effort/resource intensive
@@ -195,24 +238,22 @@ task. We trust them, but we have not had an independent party re-derive the deco
 
 No confidence intervals on the scores. The board reports point estimates. At around 100 questions the differences between adjacent models are almost certainly inside their bootstrap intervals, and until the intervals are published, small gaps in the ranking should not be read as real. The fixed-seed design means the noise is smaller than independent sampling would imply, but smaller is not zero.
 
-Search is off, and that isn't how anyone uses these models. Covered above. The current numbers measure estimation from parametric knowledge alone, and the one search experiment we ran is a single-model case study rather than a result.
+Search is off, and that isn't how anyone uses these models. The current numbers measure estimation from parametric knowledge alone.
 
 The free track isn't yet a comparison arm. Also covered above: the free prompt still restricts the same minimal DSL, so it currently serves as a contamination read rather than a measurement of the decomposition premium.
-
-Contamination signals are asymmetric and uncalibrated. Every signal in the contamination section can catch a model admitting to recall; none can catch one concealing it. High commitment on an attested value is strong evidence a question is broken. Low commitment is weak evidence a question is sound.
 
 No human baseline. We have no controlled evaluation of practiced estimators on the same questions under the same scoring, so any comparison between models and people here is an impression rather than a measurement.
 
 Failure modes are qualitative. The failure patterns described above come from reading traces on a small number of questions, not from a controlled experiment. They're real as observed; their prevalence across the bank, their consistency across models, and their sensitivity to prompt wording are all open.
 
-
+---
 
 ## Related Work
 
 ### Fermi estimation benchmarks
 Three existing benchmarks evaluate LLMs on Fermi-style estimation.
 
-REALFP (Kalyan et al., 2021) contains ~928 questions (558 test split) drawn from educational and interview-prep sources. It uses fp_score, a continuous 0–1 metric that penalizes gradually per order of magnitude off. The questions are straightforward lookups or single-step estimates ("How much does a mass of 1 liter of seawater?"), and the gold labels are noisy — several contain errors or ambiguous units. We ran GPT-5.5 on the full test split and found the benchmark is not fully saturated but is methodologically limited: it tests recall and unit conversion more than structured decomposition, and the gold label quality places a ceiling on meaningful score discrimination.
+REALFP (Kalyan et al., 2021) contains ~928 questions (558 test split) drawn from educational and interview-prep sources. It uses fp_score, a continuous 0–1 metric that penalizes gradually per order of magnitude off. The questions are straightforward lookups or single-step estimates ("How much does a mass of 1 liter of seawater?"), and the gold labels are noisy: several contain errors or ambiguous units. We ran GPT-5.5 on the full test split and found the benchmark is not fully saturated but is methodologically limited: it tests recall and unit conversion more than structured decomposition, and the gold label quality places a ceiling on meaningful score discrimination.
 
 Reviewing REALFP's gold answers on the questions where GPT-5.5 missed, we found the gold answer itself was wrong in roughly 75% of cases, the question was ambiguous in another 13%, and the model was actually wrong in about 12%. The dataset is wrong roughly seven times more often than the model. This is one reviewer on one pass but it caps how much signal an fp_score comparison can carry.
 
@@ -221,3 +262,5 @@ Open Science Olympiad Fermi Questions (~158 questions, used in a May 2025 TextQL
 FermiEval (Epstein et al., Stanford, arXiv:2510.26995) is the most recent entry. It adds confidence-interval scoring via the Winkler score, which is a step toward calibration measurement. However, its questions are drawn from a public Science Olympiad GitHub repository — almost certainly present in frontier training data. The paper does not run contamination checks. Its main finding, that LLMs are overconfident on Fermi confidence intervals, is plausible but hard to trust given the contamination exposure.
 
 None of these benchmarks require distributional outputs, use strictly proper scoring rules, or construct questions specifically to resist training-data contamination. FermiBench addresses all three gaps.
+
+---
