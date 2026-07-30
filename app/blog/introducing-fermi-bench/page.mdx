@@ -10,19 +10,44 @@ Two distinct capabilities are in play. One is estimation: is the answer in the r
 
 Measuring the second requires the model to say more than a number. If it gives a point estimate, there is no uncertainty to check. So FermiBench asks for a distribution, and scores it with a rule that rewards honest belief rather than strategic hedging.
 
+## Ground truth
+
+Pinning ground truth is the hardest part of building this benchmark, and it's where a reader should be most sceptical. Three kinds appear in the bank, with different reliability.
+
+Computed from an authoritative dataset. The median total assets of state-chartered banks filing a 10-K is not an estimate — it's a query. We pull the filings, filter the cohort, take the median. The uncertainty is definitional rather than statistical: what counts as state-chartered, which quarter, whether amended filings are included. We pin the dataset version and record the query, so the number is reproducible even if the source updates. These resolve as point truths.
+
+A published figure. Ox Bel Ha's surveyed length is 541.7 km because a survey says so. Here we inherit whatever error the source carries, and the main risk is staleness rather than noise — which is why the question is dated as of Feb 2026 and why the provenance is pinned to a specific publication rather than to "the current figure." Also point truths.
+
+A hand-authored decomposition. For quantities nobody publishes directly, we build the answer the same way we ask the model to: factors, each with a distribution, composed in Squiggle. These resolve as distributions, and they're the ones that need justification. Each decomposition is evaluated by Monte Carlo to a 90% credible interval, to which the harness fits a lognormal and from which it resamples. The refit is exact for products and quotients of lognormal factors — the dominant composition in this corpus — and mildly lossy otherwise. Write G for the reference distribution so obtained, in log space.
+
+What G represents is the pivot of the design. It is not an approximation of the truth to be improved upon but the truth as the benchmark defines it, in scale as much as in location: its dispersion is the uncertainty the available evidence leaves standing, not the author's hesitancy. A model is therefore not entitled to be more certain than the reference. An F narrower than G asserts a precision that nothing supports, and asserts it whether or not its centre is well placed; a well-centred narrow answer is not a better one, only a less calibrated one. This is the standard against which the three surviving scoring rules were judged.
+
+### Why lognormal
+
+Every factor is modelled as a lognormal. It's the natural choice for strictly positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are lognormal, so a decomposition chain stays in-family rather than requiring numerical convolution at each step. It's also the convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022) and the default in Squiggle's to(lo, hi) idiom, which means ground truth and model output share one representation.
+
+Worth being straight about: we inherited this convention rather than deriving it. We haven't tested normal-in-log-space against alternatives, or 90% bands against 80% or 95%. It's standard and defensible; it wasn't chosen over competitors in an experiment.
+
+### Worked example
+
+What fraction of Germany's total land area would need to be covered by solar panels to replace its annual coal electricity generation?
+
+```javascript
+coal_kwh = to(93.9e9, 98.3e9)   // Fraunhofer ISE vs SMARD, 2025
+solar_yield = to(150, 200)      // PVPro Solar, single-source range
+germany_m2 = 357022e6           // Eurostat 
+coal_kwh / solar_yield / germany_m2
+```
+
+Result: 90% CI approximately [0.0013, 0.0018], median ≈ 0.0015 — about 0.15% of Germany's land area, roughly 550 km² of panels.
+
 ## Scoring methodology
 
 The objectives of the benchmark constrained the choice of rule more tightly than is usual. Calibration is unobservable in a point estimate, so the rule had to score a full distribution. Honesty had to be optimal rather than merely virtuous, so the rule had to be proper with respect to whatever target we adopted. The quantities span several orders of magnitude, so it had to act on log-transformed samples, under which multiplicative error is symmetric. The bank holds on the order of a hundred questions, so its influence had to be bounded, no single item carrying the ranking. And the failure we most wanted to expose is a model claiming more precision than its evidence affords, so the rule had to score claimed precision against warranted precision — which is possible only where the target carries a scale and not merely a location.
 
 Four of the rules in common use fail one of these outright. fp_score (Kalyan et al., 2021), the established metric of the Fermi literature, compares a number against a number and is silent on everything but location. Brier is defined on discrete outcomes. The logarithmic score is strictly proper and local, and remains the reference standard in probabilistic forecasting (Gneiting & Raftery, 2007), but it is unbounded below: a single near-zero density at the realised value would dominate any aggregate over a bank this size. The Winkler interval score, which underlies the interval calibration of FermiEval (2025), is proper and unusually robust, but retains only two quantiles of the forecast. Wasserstein-1 met every requirement and is taken up below. Three rules survived the screen and were evaluated in full: CRPS-log, KL-log and Cramér-log.
 
-### The reference
-
-Ground truths are not numbers but multi-factor decompositions: named factors, a credible interval on each, and a composition. We authored them in Squiggle (QURI Team, 2024), whose named variables and native distribution arithmetic suit the form.
-
-Each decomposition is evaluated by Monte Carlo to a 90% credible interval, to which the harness fits a lognormal and from which it resamples. The refit is exact for products and quotients of lognormal factors — the dominant composition in this corpus — and mildly lossy otherwise. Write G for the reference distribution so obtained and F for the model's, both in log space.
-
-What G represents is the pivot of the design. It is not an approximation of the truth to be improved upon but the truth as the benchmark defines it, in scale as much as in location: its dispersion is the uncertainty the available evidence leaves standing, not the author's hesitancy. A model is therefore not entitled to be more certain than the reference. An F narrower than G asserts a precision that nothing supports, and asserts it whether or not its centre is well placed; a well-centred narrow answer is not a better one, only a less calibrated one. This is the standard against which the three surviving rules were judged.
+G is the reference described above, in log space; F is the model's distribution, likewise in log space.
 
 ### The three candidates
 
@@ -64,9 +89,36 @@ Scores are in nats. The transform is the natural logarithm, and the metric and i
 
 The zero of the scale is the sampling floor rather than zero itself. D is estimated between two finite samples, so its expectation is positive even at F = G; the floor depends on the sample count alone — some 0.018 at n = 64, 0.071 at n = 16 and 0.001 at n = 1024, falling as O(1/n) (Anderson, 1962). We fixed and documented a single n across all models, which makes the offset common to the leaderboard and leaves comparisons between models untouched. The floor at that n, not zero, is the point against which an absolute score is read.
 
+## Protocol
+
+**Elicitation.** Every question is put to the model with the same prompt: decompose the quantity into factors, express each factor as a distribution, and emit the result as a Squiggle program. Squiggle's to(lo, hi) constructs a lognormal with those endpoints as the 5th and 95th percentiles, so a model writes something like:
+
+```javascript
+coal_kwh = to(93.9e9, 98.3e9)
+solar_yield = to(150, 200)
+germany_m2 = 357022e6
+coal_kwh / solar_yield / germany_m2
+```
+
+We evaluate the program, sample the resulting distribution, and score the samples. The model's answer is therefore a full distribution rather than an interval; the p5/p50/p95 triple is how we summarise it, not how we score it.
+
+We deliberately keep the available DSL surface small: to(), arithmetic, variables, comments. No mixtures, no named distribution families, no beta. A larger surface would let format fluency contaminate the measurement, and we would rather score estimation than Squiggle.
+
+**Guided and free.** Each question is solved twice — once under the guided prompt above, which drives all scoring, and once under a free prompt that lets the model choose its own method. Free solves are unscored; they serve as a contamination signal, discussed below.
+
+**Tiers.** Questions sit in one of three tiers, each sealing one more thing than the last.
+
+Open — question and ground truth both public. Train against it freely; it exists so that the format and the scoring are inspectable.
+
+Public — question visible, ground truth sealed server-side. Submissions are graded by us.
+
+Private — question and ground truth both sealed. This is the headline board.
+
+The split maps onto the ordinary train/dev/test division, and onto ARC-AGI's public/semi-private/private structure. "Sealed" means sealed from the public, not from the model. Grading a private-tier question means sending it to the model being evaluated, and every model on the board is called through OpenRouter, which routes to whichever upstream provider serves that model. OpenRouter itself does not train on inputs or outputs, but the providers behind it don't all make the same commitment, and we run OpenRouter's default routing rather than restricting to providers with a no-training or zero-retention policy. So a private question is invisible to anyone browsing the site, but not invisible to whichever provider answers it — the same exposure any API call carries, no more and no less.
+
 ## Results
 
-The current bank holds 109 questions across 11 domains, evaluated on 40 models. The full leaderboard is at fermibench.com.
+The current bank holds 109 questions across 11 domains, evaluated on 40 models. The full leaderboard is at [fermibench.com](https://fermibench.com).
 
 ## Question building
 
@@ -99,66 +151,6 @@ The knife is that the question offers an obvious anchor which is the wrong one. 
 claude-opus-4.8 failed twice over. It started from a length of 240 to 290 km — the figure that circulated nearly a decade ago — and then added only a few kilometres of growth, for a system that is continuously surveyed. It landed at 275 km against an actual 541.7. Worse, it declared an interval of 249 to 307 km: high confidence in a band that does not contain the answer. gpt-5.6-sol used an updated baseline and came close.
 
 The knife is staleness. The most memorable figure for this quantity is a decade out of date, and the quantity itself grows continuously, so recall is not merely unhelpful — it is actively misleading. The benchmark does not only penalise not knowing. It penalises not knowing that you don't know.
-
-## Protocol
-
-**Elicitation.** Every question is put to the model with the same prompt: decompose the quantity into factors, express each factor as a distribution, and emit the result as a Squiggle program. Squiggle's to(lo, hi) constructs a lognormal with those endpoints as the 5th and 95th percentiles, so a model writes something like:
-
-```javascript
-coal_kwh = to(93.9e9, 98.3e9)
-solar_yield = to(150, 200)
-germany_m2 = 357022e6
-coal_kwh / solar_yield / germany_m2
-```
-
-We evaluate the program, sample the resulting distribution, and score the samples. The model's answer is therefore a full distribution rather than an interval
-
-We deliberately keep the available DSL surface small: to(), arithmetic, variables, comments. No mixtures, no named distribution families, no beta. A larger surface would let format fluency contaminate the measurement, and we would rather score estimation than Squiggle.
-
-## Ground truth
-
-Pinning ground truth is the hardest part of building this benchmark, and it's where a reader should be most sceptical. Three kinds appear in the bank, with different reliability.
-
-Computed from an authoritative dataset. The median total assets of state-chartered banks filing a 10-K is not an estimate — it's a query. We pull the filings, filter the cohort, take the median. The uncertainty is definitional rather than statistical: what counts as state-chartered, which quarter, whether amended filings are included. We pin the dataset version and record the query, so the number is reproducible even if the source updates. These resolve as point truths.
-
-A published figure. Ox Bel Ha's surveyed length is 541.7 km because a survey says so. Here we inherit whatever error the source carries, and the main risk is staleness rather than noise — which is why the question is dated as of Feb 2026 and why the provenance is pinned to a specific publication rather than to "the current figure." Also point truths.
-
-A hand-authored decomposition. For quantities nobody publishes directly, we build the answer the same way we ask the model to: factors, each with a distribution, composed in Squiggle. These resolve as distributions, and they're the ones that need justification.
-
-### Why lognormal
-
-Every factor is modelled as a lognormal. It's the natural choice for strictly positive quantities with multiplicative uncertainty, and products and quotients of independent lognormals are lognormal, so a decomposition chain stays in-family rather than requiring numerical convolution at each step. It's also the convention in the quantitative estimation community (Gooen, 2016; Sempere, 2022) and the default in Squiggle's to(lo, hi) idiom, which means ground truth and model output share one representation.
-
-Worth being straight about: we inherited this convention rather than deriving it. We haven't tested normal-in-log-space against alternatives, or 90% bands against 80% or 95%. It's standard and defensible; it wasn't chosen over competitors in an experiment.
-
-### How much uncertainty each factor gets
-
-For each factor we use the most recent complete year from the most authoritative primary source, following that source's own reporting convention. The 90% interval represents epistemic uncertainty about the true value, not year-to-year variation.
-
-Factor uncertainty follows a tiered rule, adapted from the IPCC's national greenhouse gas inventory guidelines and the EDGAR emissions inventory (Solazzo et al., 2021):
-
-Tier 0 — negligible. Small relative to the other factors in the chain, like a well-surveyed country's land area. Entered as a scalar.
-
-Tier 1 — two independent sources disagree. Their range defines the 90% interval. Independent means independently produced: FAOSTAT versus USDA PSD qualifies; FAOSTAT versus World Bank does not, because the World Bank sources FAOSTAT for agriculture.
-
-Tier 2 — one official source. Lognormal with ±5% for industrialised countries, ±10% for developing ones, following IPCC activity-data uncertainty tables.
-
-Tier 3 — one source, estimated or imputed. ±15–20%. FAO-imputed values are regression-filled gaps, not measurements, and shouldn't be treated as though they were.
-
-Where a single source reports a range — "150 to 200 kWh/m²/yr depending on region" — that range defines the interval directly.
-
-### Worked example
-
-What fraction of Germany's total land area would need to be covered by solar panels to replace its annual coal electricity generation?
-
-```javascript
-coal_kwh = to(93.9e9, 98.3e9)   // Fraunhofer ISE vs SMARD, 2025 — Tier 1
-solar_yield = to(150, 200)      // PVPro Solar, single-source range
-germany_m2 = 357022e6           // Eurostat — Tier 0
-coal_kwh / solar_yield / germany_m2
-```
-
-Result: 90% CI approximately [0.0013, 0.0018], median ≈ 0.0015 — about 0.15% of Germany's land area, roughly 550 km² of panels.
 
 ## Contamination checks
 
@@ -229,4 +221,3 @@ Open Science Olympiad Fermi Questions (~158 questions, used in a May 2025 TextQL
 FermiEval (Epstein et al., Stanford, arXiv:2510.26995) is the most recent entry. It adds confidence-interval scoring via the Winkler score, which is a step toward calibration measurement. However, its questions are drawn from a public Science Olympiad GitHub repository — almost certainly present in frontier training data. The paper does not run contamination checks. Its main finding, that LLMs are overconfident on Fermi confidence intervals, is plausible but hard to trust given the contamination exposure.
 
 None of these benchmarks require distributional outputs, use strictly proper scoring rules, or construct questions specifically to resist training-data contamination. FermiBench addresses all three gaps.
-
