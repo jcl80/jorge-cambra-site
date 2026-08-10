@@ -3,6 +3,7 @@
 import { motion } from 'motion/react'
 import {
   BLOG_POSTS,
+  FEATURED_BLOG_POSTS,
 } from "../data"
 import Link from 'next/link'
 import { AnimatedBackground } from '@/components/ui/animated-background'
@@ -39,6 +40,39 @@ export default function Blog() {
         transition={TRANSITION_SECTION}
       >
         <h3 className="mb-3 text-lg font-medium">Blog</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {FEATURED_BLOG_POSTS.map((post) => (
+            <Link
+              key={post.uid}
+              className="flex flex-col space-y-3 rounded-xl py-3 no-underline transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-900/80"
+              href={post.link}
+              data-id={post.uid}
+            >
+              {post.image && (
+                <img
+                  src={post.image}
+                  alt=""
+                  className="aspect-[4/3] w-full rounded-lg object-cover"
+                />
+              )}
+              <div className="flex flex-col space-y-1">
+                <h4 className="font-normal dark:text-zinc-100">
+                  {post.title}
+                </h4>
+                <p className="text-zinc-500 dark:text-zinc-400">
+                  {post.description}
+                </p>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </motion.section>
+
+      <motion.section
+        variants={VARIANTS_SECTION}
+        transition={TRANSITION_SECTION}
+      >
+        <h3 className="mb-3 text-lg font-medium">More blog</h3>
         <div className="flex flex-col space-y-0">
           <AnimatedBackground
             enableHover

@@ -26,6 +26,7 @@ type BlogPost = {
   description: string
   link: string
   uid: string
+  image?: string
 }
 
 type SocialLink = {
@@ -162,6 +163,23 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
       'Yup',
       'Jest'
     ]
+  },
+]
+
+export const FEATURED_BLOG_POSTS: BlogPost[] = [
+  {
+    title: 'Reasoning',
+    description: 'Thoughts about LLM reasoning. (coming soon)',
+    link: '/blog/reasoning',
+    uid: 'featured-reasoning',
+    image: '/images/Naruto and co thinking/naruto thinking.jpg',
+  },
+  {
+    title: 'Tiny Zero Reproduction',
+    description: 'Come and enjoy the aha! moment (coming soon)',
+    link: '/blog/tainy',
+    uid: 'featured-tinizero',
+    image: '/images/Naruto and co thinking/Himawari thinking.jpeg',
   },
 ]
 
