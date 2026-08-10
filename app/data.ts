@@ -168,7 +168,7 @@ export const WORK_EXPERIENCE: WorkExperience[] = [
 export const BLOG_POSTS: BlogPost[] = [
   {
     title: 'Introducing FermiBench',
-    description: 'A rewritten and expanded look at how well frontier LLMs estimate quantities they don\'t know.',
+    description: 'A look at how well frontier LLMs estimate quantities they don\'t know.',
     link: '/blog/introducing-fermi-bench',
     uid: 'blog-introducing-fermi-bench',
   },
@@ -184,18 +184,18 @@ export const BLOG_POSTS: BlogPost[] = [
     link: '/blog/custos-part-1',
     uid: 'blog-custos-part-1',
   },
-  {
-    title: 'Evaluating LLM Quantitative Estimation Under Uncertainty',
-    description: 'A study on LLM quantitative estimation under uncertainty.',
-    link: '/blog/estimating-under-uncertainty',
-    uid: 'blog-estimating-under-uncertainty',
-  },
-  {
-    title: 'FermiBench: Evaluating LLM Quantitative Reasoning with Distributional Fermi Estimation',
-    description: 'A benchmark for how well frontier models decompose quantitative questions into factor-level distributions and compose them into calibrated estimates.',
-    link: '/blog/fermibench',
-    uid: 'blog-fermibench',
-  },
+  // {
+  //   title: 'Evaluating LLM Quantitative Estimation Under Uncertainty',
+  //   description: 'A study on LLM quantitative estimation under uncertainty.',
+  //   link: '/blog/estimating-under-uncertainty',
+  //   uid: 'blog-estimating-under-uncertainty',
+  // },
+  // {
+  //   title: 'FermiBench: Evaluating LLM Quantitative Reasoning with Distributional Fermi Estimation',
+  //   description: 'A benchmark for how well frontier models decompose quantitative questions into factor-level distributions and compose them into calibrated estimates.',
+  //   link: '/blog/fermibench',
+  //   uid: 'blog-fermibench',
+  // },
   {
     title: 'Offloading Sentinel\'s Analysis Pipeline to Local Inference — Conclusions',
     description: 'What works for what, what to buy, what to build next.',
